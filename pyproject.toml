@@ -23,5 +23,9 @@ dependencies = [
     # testing
     "pytest==7.4.3",
     "pytest-asyncio==0.21.1",
-    "httpx==0.25.2",
+    "httpx==0.26.0",
+    # Image processing (for later phases)
+    "opencv-python==4.9.0.80",
+    "numpy==1.26.3",
+    "Pillow==10.2.0",
 ]

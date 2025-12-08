@@ -1,0 +1,196 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Agent Message Schemas",
+    
+    "definitions": {
+      "TaskMessage": {
+        "type": "object",
+        "required": ["message_id", "message_type", "timestamp", "sender", "receiver"],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message_type": {
+            "type": "string",
+            "enum": [
+              "task_assigned",
+              "task_started",
+              "task_completed",
+              "task_failed",
+              "task_retry"
+            ]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "receiver": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "correlation_id": {
+            "type": "string",
+            "description": "For tracking related messages"
+          }
+        }
+      },
+  
+      "FrameDataMessage": {
+        "type": "object",
+        "required": ["frame_id", "source_id", "timestamp", "data"],
+        "properties": {
+          "frame_id": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sequence_number": {
+            "type": "integer"
+          },
+          "data": {
+            "type": "string",
+            "format": "base64",
+            "description": "Base64 encoded image data"
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "width": {"type": "integer"},
+              "height": {"type": "integer"},
+              "format": {"type": "string"},
+              "size_bytes": {"type": "integer"}
+            }
+          }
+        }
+      },
+  
+      "ErrorMessage": {
+        "type": "object",
+        "required": ["error_id", "error_type", "message", "timestamp"],
+        "properties": {
+          "error_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "error_type": {
+            "type": "string",
+            "enum": [
+              "network_error",
+              "processing_error",
+              "storage_error",
+              "timeout_error",
+              "resource_exhausted"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "retry_count": {
+            "type": "integer",
+            "default": 0
+          },
+          "stack_trace": {
+            "type": "string"
+          }
+        }
+      },
+  
+      "BackpressureMessage": {
+        "type": "object",
+        "required": ["agent_id", "pressure_level", "timestamp"],
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "pressure_level": {
+            "type": "string",
+            "enum": ["normal", "moderate", "high", "critical"]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "metrics": {
+            "type": "object",
+            "properties": {
+              "queue_length": {"type": "integer"},
+              "processing_rate": {"type": "number"},
+              "cpu_usage": {"type": "number"},
+              "memory_usage": {"type": "number"}
+            }
+          },
+          "suggested_action": {
+            "type": "string",
+            "enum": ["reduce_fps", "reduce_batch_size", "scale_out", "pause"]
+          }
+        }
+      },
+  
+      "HeartbeatMessage": {
+        "type": "object",
+        "required": ["agent_id", "status", "timestamp"],
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["healthy", "degraded", "unhealthy"]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "uptime_seconds": {
+            "type": "number"
+          },
+          "metrics": {
+            "type": "object"
+          }
+        }
+      },
+  
+      "ConfigUpdateMessage": {
+        "type": "object",
+        "required": ["agent_id", "config", "timestamp"],
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "config": {
+            "type": "object",
+            "description": "Configuration updates to apply"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "apply_immediately": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    }
+  }
