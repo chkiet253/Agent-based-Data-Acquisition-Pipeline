@@ -1,0 +1,180 @@
+openapi: 3.0.0
+info:
+  title: Processing & Storage Agents API
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8002
+    description: Processing Agent
+  - url: http://localhost:8003
+    description: Storage Agent
+
+paths:
+  # Processing Agent
+  /process/batch:
+    post:
+      summary: Process batch of frames
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProcessingBatch'
+      responses:
+        '200':
+          description: Batch processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessingResult'
+
+  /process/status:
+    get:
+      summary: Get processing queue status
+      responses:
+        '200':
+          description: Queue status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queue_length:
+                    type: integer
+                  processing_rate:
+                    type: number
+                  status:
+                    type: string
+
+  # Storage Agent
+  /storage/write:
+    post:
+      summary: Write data to storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StorageRequest'
+      responses:
+        '200':
+          description: Data stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  storage_id:
+                    type: string
+                  path:
+                    type: string
+
+  /storage/metadata:
+    post:
+      summary: Store metadata
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Metadata'
+      responses:
+        '201':
+          description: Metadata stored
+
+components:
+  schemas:
+    ProcessingBatch:
+      type: object
+      required:
+        - batch_id
+        - frames
+      properties:
+        batch_id:
+          type: string
+        frames:
+          type: array
+          items:
+            type: object
+            properties:
+              frame_id:
+                type: string
+              data:
+                type: string
+                format: base64
+              timestamp:
+                type: string
+        config:
+          type: object
+          properties:
+            enable_detection:
+              type: boolean
+            enable_anonymization:
+              type: boolean
+            detection_threshold:
+              type: number
+
+    ProcessingResult:
+      type: object
+      properties:
+        batch_id:
+          type: string
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              frame_id:
+                type: string
+              detections:
+                type: array
+                items:
+                  type: object
+              anonymized:
+                type: boolean
+              processing_time_ms:
+                type: number
+
+    StorageRequest:
+      type: object
+      required:
+        - data
+        - format
+      properties:
+        data:
+          type: object
+        format:
+          type: string
+          enum: [parquet, csv, json]
+        destination:
+          type: object
+          properties:
+            bucket:
+              type: string
+            path:
+              type: string
+        compression:
+          type: string
+          enum: [none, gzip, snappy]
+
+    Metadata:
+      type: object
+      properties:
+        source_id:
+          type: string
+        time_range:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+        fps:
+          type: integer
+        hash:
+          type: string
+        privacy_tag:
+          type: string
+        storage_path:
+          type: string

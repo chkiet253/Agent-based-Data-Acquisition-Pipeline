@@ -1,0 +1,151 @@
+openapi: 3.0.0
+info:
+  title: Ingestion Agent API
+  version: 1.0.0
+  description: Handles video/image data ingestion from sources
+
+servers:
+  - url: http://localhost:8001
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service healthy
+
+  /ingest/start:
+    post:
+      summary: Start ingestion from source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestionRequest'
+      responses:
+        '200':
+          description: Ingestion started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                  status:
+                    type: string
+
+  /ingest/{job_id}/stop:
+    post:
+      summary: Stop ingestion job
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job stopped
+
+  /ingest/{job_id}/status:
+    get:
+      summary: Get ingestion job status
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionStatus'
+
+  /ingest/{job_id}/config:
+    patch:
+      summary: Update ingestion config (for backpressure)
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fps:
+                  type: integer
+                batch_size:
+                  type: integer
+      responses:
+        '200':
+          description: Config updated
+
+components:
+  schemas:
+    IngestionRequest:
+      type: object
+      required:
+        - source_id
+        - source_type
+        - source_url
+      properties:
+        source_id:
+          type: string
+        source_type:
+          type: string
+          enum: [video_file, rtsp_stream, webcam, image_folder]
+        source_url:
+          type: string
+        config:
+          type: object
+          properties:
+            fps:
+              type: integer
+              minimum: 1
+              maximum: 60
+              default: 30
+            batch_size:
+              type: integer
+              default: 10
+            start_frame:
+              type: integer
+              default: 0
+            end_frame:
+              type: integer
+            resolution:
+              type: object
+              properties:
+                width:
+                  type: integer
+                height:
+                  type: integer
+
+    IngestionStatus:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [initializing, running, paused, completed, failed]
+        frames_ingested:
+          type: integer
+        current_fps:
+          type: number
+        errors:
+          type: array
+          items:
+            type: object
+        timestamp:
+          type: string
+          format: date-time

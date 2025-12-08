@@ -6,5 +6,18 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments
-.venv
+# Virtual environments (the ones inside seminar/)
+seminar/Lib/
+seminar/Scripts/
+seminar/pyvenv.cfg
+
+# Generic venv names
+.venv/
+venv/
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
