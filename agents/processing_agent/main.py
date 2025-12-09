@@ -1,8 +1,8 @@
-import sys
+﻿import sys
 import os
 
-# Add base agent to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'base'))
+# Add parent directory to path to import base
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from base.base_agent import HelloWorldAgent
 
