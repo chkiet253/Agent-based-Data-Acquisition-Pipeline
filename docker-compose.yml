@@ -47,8 +47,8 @@ services:
   # Ingestion Agent
   ingestion:
     build:
-      context: ./agents/ingestion
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: agents/ingestion_agent/Dockerfile
     container_name: ingestion
     ports:
       - "8001:8001"
@@ -60,7 +60,8 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/logs
-      - ./test_data:/test_data  # For test videos
+      - ./test_data:/test_data
+      - ./agents:/app/agents
     depends_on:
       - orchestrator
     networks:
@@ -70,8 +71,8 @@ services:
   # Processing Agent
   processing:
     build:
-      context: ./agents/processing
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: agents/processing_agent/Dockerfile
     container_name: processing
     ports:
       - "8002:8002"
@@ -83,25 +84,18 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/logs
+      - ./agents:/app/agents
     depends_on:
       - orchestrator
     networks:
       - agent_network
     restart: unless-stopped
-    # Uncomment for GPU support
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
 
   # Storage Agent
   storage:
     build:
-      context: ./agents/storage
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: agents/storage_agent/Dockerfile
     container_name: storage
     ports:
       - "8003:8003"
@@ -117,21 +111,13 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/logs
+      - ./agents:/app/agents
     depends_on:
       - orchestrator
       - minio
     networks:
       - agent_network
     restart: unless-stopped
-
-  # Optional: Monitoring Dashboard (Grafana/Prometheus later)
-  # dashboard:
-  #   image: grafana/grafana:latest
-  #   container_name: dashboard
-  #   ports:
-  #     - "3000:3000"
-  #   networks:
-  #     - agent_network
 
 networks:
   agent_network:
