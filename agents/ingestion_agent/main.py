@@ -1,24 +1,15 @@
-from fastapi import FastAPI
-import uvicorn
+﻿import sys
+import os
 
-app = FastAPI()
+# Add parent directory to path to import base
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-@app.get("/agents")
-def get_agent_info():
-    return {
-        "agentId": "ingestion-001",
-        "type": "ingestion",
-        "capabilities": ["capture_video", "queue_frames"]
-    }
-
-@app.post("/invoke/start_capture")
-def start_capture(source_id: str, fps: int = 10, duration: int = 60):
-    # TODO: Actual video capture logic
-    return {
-        "status": "started",
-        "job_id": "job-123",
-        "message": f"Capturing {source_id} at {fps}fps for {duration}s"
-    }
+from base.base_agent import HelloWorldAgent
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    agent = HelloWorldAgent(
+        agent_type="ingestion",
+        port=8001,
+        orchestrator_url="http://orchestrator:8000"
+    )
+    agent.run()

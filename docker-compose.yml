@@ -25,8 +25,8 @@ services:
   # Orchestrator Agent
   orchestrator:
     build:
-      context: ./agents/orchestrator
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: agents/orchestrator/Dockerfile
     container_name: orchestrator
     ports:
       - "8000:8000"
@@ -61,7 +61,6 @@ services:
       - ./data:/data
       - ./logs:/logs
       - ./test_data:/test_data
-      - ./agents:/app/agents
     depends_on:
       - orchestrator
     networks:
@@ -84,7 +83,6 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/logs
-      - ./agents:/app/agents
     depends_on:
       - orchestrator
     networks:
@@ -111,7 +109,6 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/logs
-      - ./agents:/app/agents
     depends_on:
       - orchestrator
       - minio
