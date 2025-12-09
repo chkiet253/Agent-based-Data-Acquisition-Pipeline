@@ -4,26 +4,22 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
-COPY requirements.txt .
+# Install requirements for orchestrator
+COPY agents/orchestrator/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy agents folder
+COPY agents /app/agents
 
-# Create directories
-RUN mkdir -p /data /logs
-
-# Expose port (will be different for each agent)
+# Expose orchestrator port
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health')"
+HEALTHCHECK --interval=30s --timeout=10s \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the agent
-CMD ["python", "main.py"]
+# Run orchestrator
+CMD ["python", "agents/orchestrator/main.py"]
