@@ -1,4 +1,4 @@
-# Core dependencies
+# Core dependencies (from Phase 1)
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
 pydantic==2.5.3
@@ -6,6 +6,16 @@ httpx==0.26.0
 
 # Database
 aiosqlite==0.19.0
+
+# Image Processing (Phase 2)
+opencv-python-headless==4.9.0.80
+numpy==1.26.3
+Pillow==10.2.0
+
+# Data Storage (Phase 2)
+pandas==2.1.4
+pyarrow==14.0.2
+minio==7.2.3
 
 # Testing
 pytest==7.4.4
