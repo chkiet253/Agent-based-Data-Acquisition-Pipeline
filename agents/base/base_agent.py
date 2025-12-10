@@ -1,5 +1,6 @@
 """
 Base Agent Class - Foundation for all agents in the system
+FIXED: JSON serialization issues with datetime objects
 """
 import os
 import asyncio
@@ -163,9 +164,13 @@ class BaseAgent(ABC):
                 metrics=await self.get_metrics()
             )
             
+            # FIX: Convert datetime to ISO format string for JSON serialization
+            heartbeat_data = heartbeat.model_dump()
+            heartbeat_data['timestamp'] = heartbeat_data['timestamp'].isoformat()
+            
             response = await self.http_client.post(
                 f"{self.orchestrator_url}/agents/{self.agent_id}/heartbeat",
-                json=heartbeat.model_dump()
+                json=heartbeat_data
             )
             response.raise_for_status()
             
@@ -201,9 +206,13 @@ class BaseAgent(ABC):
         )
         
         try:
+            # FIX: Convert datetime to ISO format for JSON serialization
+            message_data = message.model_dump()
+            message_data['timestamp'] = message_data['timestamp'].isoformat()
+            
             response = await self.http_client.post(
                 f"{receiver_url}/message",
-                json=message.model_dump()
+                json=message_data
             )
             response.raise_for_status()
             return response.json()

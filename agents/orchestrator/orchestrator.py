@@ -1,12 +1,13 @@
 """
 Orchestrator Agent - Central coordinator for the multi-agent pipeline
 Phase 1: Basic registration and heartbeat functionality
+FIXED: Now uses async database operations with aiosqlite
 """
-import sqlite3
+import aiosqlite
 import json
+import os
 from datetime import datetime
 from typing import Dict, List, Optional
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -47,41 +48,39 @@ class OrchestratorAgent:
     
     def __init__(self, db_path: str = "/data/orchestrator.db"):
         self.db_path = db_path
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        
         self.app = FastAPI(title="Orchestrator Agent")
-        self._init_database()
         self._setup_routes()
     
-    def _init_database(self):
-        """Initialize SQLite database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+    async def _init_database(self):
+        """Initialize SQLite database (async)"""
+        async with aiosqlite.connect(self.db_path) as db:
+            # Create agents table
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS agents (
+                    agent_id TEXT PRIMARY KEY,
+                    agent_type TEXT NOT NULL,
+                    endpoint TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'idle',
+                    capabilities TEXT,
+                    registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_heartbeat TIMESTAMP,
+                    metadata TEXT
+                )
+            """)
+            await db.commit()
         
-        # Create agents table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS agents (
-                agent_id TEXT PRIMARY KEY,
-                agent_type TEXT NOT NULL,
-                endpoint TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'idle',
-                capabilities TEXT,
-                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_heartbeat TIMESTAMP,
-                metadata TEXT
-            )
-        """)
-        
-        conn.commit()
-        conn.close()
         logger.info(f"Database initialized at {self.db_path}")
-    
-    def _get_db(self):
-        """Get database connection"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
     
     def _setup_routes(self):
         """Setup FastAPI routes"""
+        
+        @self.app.on_event("startup")
+        async def startup():
+            await self._init_database()
         
         @self.app.get("/health")
         async def health():
@@ -95,27 +94,23 @@ class OrchestratorAgent:
         async def register_agent(registration: AgentRegistration):
             """Register a new agent"""
             try:
-                conn = self._get_db()
-                cursor = conn.cursor()
-                
                 # Generate agent ID
                 agent_id = f"{registration.agent_type}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
                 
-                # Insert agent
-                cursor.execute("""
-                    INSERT INTO agents (agent_id, agent_type, endpoint, status, capabilities, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    agent_id,
-                    registration.agent_type,
-                    registration.endpoint,
-                    'idle',
-                    json.dumps(registration.capabilities),
-                    json.dumps(registration.metadata)
-                ))
-                
-                conn.commit()
-                conn.close()
+                # Insert agent (async)
+                async with aiosqlite.connect(self.db_path) as db:
+                    await db.execute("""
+                        INSERT INTO agents (agent_id, agent_type, endpoint, status, capabilities, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        agent_id,
+                        registration.agent_type,
+                        registration.endpoint,
+                        'idle',
+                        json.dumps(registration.capabilities),
+                        json.dumps(registration.metadata)
+                    ))
+                    await db.commit()
                 
                 logger.info(f"Registered agent: {agent_id} ({registration.agent_type})")
                 
@@ -133,27 +128,25 @@ class OrchestratorAgent:
         async def receive_heartbeat(agent_id: str, heartbeat: Heartbeat):
             """Receive heartbeat from agent"""
             try:
-                conn = self._get_db()
-                cursor = conn.cursor()
-                
-                # Update last heartbeat and status
-                cursor.execute("""
-                    UPDATE agents 
-                    SET last_heartbeat = ?, status = ?
-                    WHERE agent_id = ?
-                """, (datetime.utcnow(), heartbeat.status, agent_id))
-                
-                if cursor.rowcount == 0:
-                    conn.close()
-                    raise HTTPException(status_code=404, detail="Agent not found")
-                
-                conn.commit()
-                conn.close()
+                # Update last heartbeat and status (async)
+                async with aiosqlite.connect(self.db_path) as db:
+                    cursor = await db.execute("""
+                        UPDATE agents 
+                        SET last_heartbeat = ?, status = ?
+                        WHERE agent_id = ?
+                    """, (datetime.utcnow(), heartbeat.status, agent_id))
+                    
+                    if cursor.rowcount == 0:
+                        raise HTTPException(status_code=404, detail="Agent not found")
+                    
+                    await db.commit()
                 
                 logger.debug(f"Heartbeat received from {agent_id}: {heartbeat.status}")
                 
                 return {"status": "acknowledged"}
                 
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Heartbeat processing failed: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
@@ -162,29 +155,28 @@ class OrchestratorAgent:
         async def list_agents():
             """List all registered agents"""
             try:
-                conn = self._get_db()
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    SELECT agent_id, agent_type, endpoint, status, 
-                           capabilities, registered_at, last_heartbeat
-                    FROM agents
-                    ORDER BY registered_at DESC
-                """)
-                
-                agents = []
-                for row in cursor.fetchall():
-                    agents.append({
-                        "agent_id": row["agent_id"],
-                        "agent_type": row["agent_type"],
-                        "endpoint": row["endpoint"],
-                        "status": row["status"],
-                        "capabilities": json.loads(row["capabilities"] or "[]"),
-                        "registered_at": row["registered_at"],
-                        "last_heartbeat": row["last_heartbeat"]
-                    })
-                
-                conn.close()
+                async with aiosqlite.connect(self.db_path) as db:
+                    db.row_factory = aiosqlite.Row
+                    cursor = await db.execute("""
+                        SELECT agent_id, agent_type, endpoint, status, 
+                               capabilities, registered_at, last_heartbeat
+                        FROM agents
+                        ORDER BY registered_at DESC
+                    """)
+                    
+                    rows = await cursor.fetchall()
+                    
+                    agents = []
+                    for row in rows:
+                        agents.append({
+                            "agent_id": row["agent_id"],
+                            "agent_type": row["agent_type"],
+                            "endpoint": row["endpoint"],
+                            "status": row["status"],
+                            "capabilities": json.loads(row["capabilities"] or "[]"),
+                            "registered_at": row["registered_at"],
+                            "last_heartbeat": row["last_heartbeat"]
+                        })
                 
                 return {"agents": agents, "count": len(agents)}
                 
@@ -196,32 +188,30 @@ class OrchestratorAgent:
         async def get_agent(agent_id: str):
             """Get specific agent info"""
             try:
-                conn = self._get_db()
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    SELECT agent_id, agent_type, endpoint, status, 
-                           capabilities, registered_at, last_heartbeat, metadata
-                    FROM agents
-                    WHERE agent_id = ?
-                """, (agent_id,))
-                
-                row = cursor.fetchone()
-                conn.close()
-                
-                if not row:
-                    raise HTTPException(status_code=404, detail="Agent not found")
-                
-                return {
-                    "agent_id": row["agent_id"],
-                    "agent_type": row["agent_type"],
-                    "endpoint": row["endpoint"],
-                    "status": row["status"],
-                    "capabilities": json.loads(row["capabilities"] or "[]"),
-                    "registered_at": row["registered_at"],
-                    "last_heartbeat": row["last_heartbeat"],
-                    "metadata": json.loads(row["metadata"] or "{}")
-                }
+                async with aiosqlite.connect(self.db_path) as db:
+                    db.row_factory = aiosqlite.Row
+                    cursor = await db.execute("""
+                        SELECT agent_id, agent_type, endpoint, status, 
+                               capabilities, registered_at, last_heartbeat, metadata
+                        FROM agents
+                        WHERE agent_id = ?
+                    """, (agent_id,))
+                    
+                    row = await cursor.fetchone()
+                    
+                    if not row:
+                        raise HTTPException(status_code=404, detail="Agent not found")
+                    
+                    return {
+                        "agent_id": row["agent_id"],
+                        "agent_type": row["agent_type"],
+                        "endpoint": row["endpoint"],
+                        "status": row["status"],
+                        "capabilities": json.loads(row["capabilities"] or "[]"),
+                        "registered_at": row["registered_at"],
+                        "last_heartbeat": row["last_heartbeat"],
+                        "metadata": json.loads(row["metadata"] or "{}")
+                    }
                 
             except HTTPException:
                 raise
@@ -233,22 +223,23 @@ class OrchestratorAgent:
         async def unregister_agent(agent_id: str):
             """Unregister an agent"""
             try:
-                conn = self._get_db()
-                cursor = conn.cursor()
-                
-                cursor.execute("DELETE FROM agents WHERE agent_id = ?", (agent_id,))
-                
-                if cursor.rowcount == 0:
-                    conn.close()
-                    raise HTTPException(status_code=404, detail="Agent not found")
-                
-                conn.commit()
-                conn.close()
+                async with aiosqlite.connect(self.db_path) as db:
+                    cursor = await db.execute(
+                        "DELETE FROM agents WHERE agent_id = ?", 
+                        (agent_id,)
+                    )
+                    
+                    if cursor.rowcount == 0:
+                        raise HTTPException(status_code=404, detail="Agent not found")
+                    
+                    await db.commit()
                 
                 logger.info(f"Unregistered agent: {agent_id}")
                 
                 return {"status": "unregistered", "agent_id": agent_id}
                 
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Failed to unregister agent: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
