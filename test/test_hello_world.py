@@ -69,9 +69,9 @@ class Phase1Tester:
         """Test 4: Manual agent registration"""
         print("\n🔍 Test 4: Manual Agent Registration")
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 registration = {
-                    "agent_type": "test",
+                    "agent_type": "monitoring",  # Changed from "test" to valid type
                     "endpoint": "http://localhost:9999",
                     "capabilities": ["test_capability"],
                     "metadata": {"test": True}
@@ -82,17 +82,22 @@ class Phase1Tester:
                     json=registration
                 )
                 
+                # Print response for debugging
+                print(f"   Response status: {response.status_code}")
+                print(f"   Response body: {response.text}")
+                
                 if response.status_code == 200:
                     data = response.json()
                     print(f"✅ Test agent registered: {data['agent_id']}")
                     return True
                 else:
                     print(f"⚠️ Registration returned status {response.status_code}")
-                    print(f"   Response: {response.text}")
                     return False
                     
         except Exception as e:
-            print(f"❌ Manual registration failed: {e}")
+            print(f"❌ Manual registration failed: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(f"   Traceback: {traceback.format_exc()}")
             return False
     
     async def test_heartbeat(self):
@@ -100,7 +105,7 @@ class Phase1Tester:
         print("\n🔍 Test 5: Heartbeat Mechanism")
         try:
             # Get first registered agent
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(f"{self.orchestrator_url}/agents")
                 agents = response.json()['agents']
                 
