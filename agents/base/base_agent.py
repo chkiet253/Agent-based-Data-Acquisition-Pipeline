@@ -1,7 +1,4 @@
-"""
-Base Agent Class - Foundation for all agents in the system
-FIXED: JSON serialization issues with datetime objects
-"""
+
 import os
 import asyncio
 import logging
@@ -61,7 +58,8 @@ class BaseAgent(ABC):
         orchestrator_url: Optional[str] = None
     ):
         self.agent_type = agent_type
-        self.agent_id = agent_id or f"{agent_type}-{uuid.uuid4().hex[:8]}"
+        # Generate temporary ID - will be replaced after registration
+        self.agent_id = agent_id or f"{agent_type}-temp-{uuid.uuid4().hex[:8]}"
         self.port = port
         self.orchestrator_url = orchestrator_url or os.getenv("ORCHESTRATOR_URL")
         
@@ -129,29 +127,50 @@ class BaseAgent(ABC):
             self.logger.warning("No orchestrator URL configured")
             return False
         
-        try:
-            capabilities = await self.get_capabilities()
-            registration = AgentRegistration(
-                agent_type=self.agent_type,
-                endpoint=f"http://{self.agent_id}:{self.port}",
-                capabilities=capabilities,
-                metadata={"version": "1.0.0"}
-            )
-            
-            response = await self.http_client.post(
-                f"{self.orchestrator_url}/agents/register",
-                json=registration.model_dump()
-            )
-            response.raise_for_status()
-            
-            self.logger.info(f"Successfully registered with orchestrator")
-            self.registered = True
-            self.status = "idle"
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Registration failed: {e}")
-            return False
+        max_retries = 5
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                capabilities = await self.get_capabilities()
+                registration = AgentRegistration(
+                    agent_type=self.agent_type,
+                    endpoint=f"http://{self.agent_type}:{self.port}",  # Use service name for Docker
+                    capabilities=capabilities,
+                    metadata={"version": "1.0.0"}
+                )
+                
+                response = await self.http_client.post(
+                    f"{self.orchestrator_url}/agents/register",
+                    json=registration.model_dump()
+                )
+                response.raise_for_status()
+                
+                # CRITICAL FIX: Update agent_id from orchestrator response
+                registration_data = response.json()
+                self.agent_id = registration_data['agent_id']
+                
+                # Update logger name
+                self.logger = logging.getLogger(self.agent_id)
+                
+                self.logger.info(f"Successfully registered with orchestrator as {self.agent_id}")
+                self.registered = True
+                self.status = "idle"
+                return True
+                
+            except httpx.ConnectError as e:
+                self.logger.warning(f"Registration attempt {attempt + 1}/{max_retries} failed: Cannot connect to orchestrator")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    
+            except Exception as e:
+                self.logger.error(f"Registration attempt {attempt + 1}/{max_retries} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+        
+        self.logger.error("Failed to register after all retries")
+        return False
     
     async def send_heartbeat(self):
         """Send periodic heartbeat to orchestrator"""
@@ -164,16 +183,25 @@ class BaseAgent(ABC):
                 metrics=await self.get_metrics()
             )
             
-            # FIX: Convert datetime to ISO format string for JSON serialization
+            # Convert datetime to ISO format string for JSON serialization
             heartbeat_data = heartbeat.model_dump()
             heartbeat_data['timestamp'] = heartbeat_data['timestamp'].isoformat()
             
+            # CRITICAL FIX: Use the correct agent_id from registration
             response = await self.http_client.post(
                 f"{self.orchestrator_url}/agents/{self.agent_id}/heartbeat",
                 json=heartbeat_data
             )
             response.raise_for_status()
             
+            self.logger.debug(f"Heartbeat sent successfully")
+            
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                self.logger.error(f"Agent {self.agent_id} not found in orchestrator - may need to re-register")
+                self.registered = False
+            else:
+                self.logger.error(f"Heartbeat failed with status {e.response.status_code}: {e}")
         except Exception as e:
             self.logger.error(f"Heartbeat failed: {e}")
     
@@ -206,7 +234,7 @@ class BaseAgent(ABC):
         )
         
         try:
-            # FIX: Convert datetime to ISO format for JSON serialization
+            # Convert datetime to ISO format for JSON serialization
             message_data = message.model_dump()
             message_data['timestamp'] = message_data['timestamp'].isoformat()
             
@@ -223,7 +251,7 @@ class BaseAgent(ABC):
     
     async def startup(self):
         """Startup sequence"""
-        self.logger.info(f"Starting {self.agent_type} agent: {self.agent_id}")
+        self.logger.info(f"Starting {self.agent_type} agent")
         
         # Register with orchestrator
         if self.orchestrator_url:
@@ -233,6 +261,8 @@ class BaseAgent(ABC):
                 self.heartbeat_task = asyncio.create_task(
                     self.start_heartbeat_loop()
                 )
+            else:
+                self.logger.warning("Failed to register, will operate without orchestrator")
         
         # Custom startup logic
         await self.on_startup()

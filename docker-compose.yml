@@ -5,6 +5,7 @@ services:
   minio:
     image: minio/minio:latest
     container_name: minio
+    hostname: minio
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -28,11 +29,11 @@ services:
       context: .
       dockerfile: agents/orchestrator/Dockerfile
     container_name: orchestrator
+    hostname: orchestrator
     ports:
       - "8000:8000"
     environment:
       - AGENT_TYPE=orchestrator
-      - AGENT_ID=orchestrator-001
       - DATABASE_URL=sqlite:///data/orchestrator.db
       - LOG_LEVEL=INFO
     volumes:
@@ -43,6 +44,12 @@ services:
     networks:
       - agent_network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
 
   # Ingestion Agent
   ingestion:
@@ -50,11 +57,11 @@ services:
       context: .
       dockerfile: agents/ingestion_agent/Dockerfile
     container_name: ingestion
+    hostname: ingestion
     ports:
       - "8001:8001"
     environment:
       - AGENT_TYPE=ingestion
-      - AGENT_ID=ingestion-001
       - ORCHESTRATOR_URL=http://orchestrator:8000
       - LOG_LEVEL=INFO
     volumes:
@@ -62,7 +69,8 @@ services:
       - ./logs:/logs
       - ./test_data:/test_data
     depends_on:
-      - orchestrator
+      orchestrator:
+        condition: service_healthy
     networks:
       - agent_network
     restart: unless-stopped
@@ -73,18 +81,19 @@ services:
       context: .
       dockerfile: agents/processing_agent/Dockerfile
     container_name: processing
+    hostname: processing
     ports:
       - "8002:8002"
     environment:
       - AGENT_TYPE=processing
-      - AGENT_ID=processing-001
       - ORCHESTRATOR_URL=http://orchestrator:8000
       - LOG_LEVEL=INFO
     volumes:
       - ./data:/data
       - ./logs:/logs
     depends_on:
-      - orchestrator
+      orchestrator:
+        condition: service_healthy
     networks:
       - agent_network
     restart: unless-stopped
@@ -95,11 +104,11 @@ services:
       context: .
       dockerfile: agents/storage_agent/Dockerfile
     container_name: storage
+    hostname: storage
     ports:
       - "8003:8003"
     environment:
       - AGENT_TYPE=storage
-      - AGENT_ID=storage-001
       - ORCHESTRATOR_URL=http://orchestrator:8000
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=minioadmin
@@ -110,8 +119,10 @@ services:
       - ./data:/data
       - ./logs:/logs
     depends_on:
-      - orchestrator
-      - minio
+      orchestrator:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
       - agent_network
     restart: unless-stopped
