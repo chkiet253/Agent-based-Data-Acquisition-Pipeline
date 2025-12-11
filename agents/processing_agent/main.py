@@ -288,7 +288,7 @@ class ProcessingAgent(BaseAgent):
             
             for agent in agents:
                 if agent['agent_type'] == 'storage':
-                    self.storage_agent_url = "http://localhost:8003"
+                    self.storage_agent_url = "http://storage:8003"
                     self.logger.info(f"Found storage agent: {self.storage_agent_url}")
                     return
             

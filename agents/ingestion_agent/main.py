@@ -289,7 +289,7 @@ class IngestionAgent(BaseAgent):
             for agent in agents:
                 if agent['agent_type'] == 'processing':
                     # Use localhost instead of container name
-                    self.processing_agent_url = "http://localhost:8002"
+                    self.processing_agent_url = "http://processing:8002"
                     self.logger.info(f"Found processing agent: {self.processing_agent_url}")
                     return
             
