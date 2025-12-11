@@ -17,7 +17,8 @@ class Phase2Tester:
         self.storage_url = "http://localhost:8003"
         
         # Test video path (should be in test_data folder)
-        self.test_video = "/test_data/sample.mp4"
+        self.test_video = r"D:\projects\seminar\test_data\video_traffic.mp4"
+        self.test_video_container = "/test_data/video_traffic.mp4"
     
     async def test_agents_registered(self):
         """Test 1: All agents are registered"""
@@ -66,7 +67,7 @@ class Phase2Tester:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 config = {
                     "source_id": "test_source_001",
-                    "video_path": self.test_video,
+                    "video_path": self.test_video_container,  # Docker container path
                     "fps": 5,  # Process 5 frames per second
                     "batch_size": 10,
                     "start_frame": 0,
