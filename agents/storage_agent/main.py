@@ -550,7 +550,9 @@ class StorageAgent(BaseAgent):
             "minio_integration",
             "fallback_storage",
             "auto_cleanup",
-            "health_monitoring"
+            "health_monitoring",
+            "mode_switching",
+            "disk_management"
         ]
     
     async def get_metrics(self) -> Dict[str, Any]:
