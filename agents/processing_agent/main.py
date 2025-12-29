@@ -489,7 +489,9 @@ class ProcessingAgent(BaseAgent):
             "anonymization",
             "circuit_breaker",
             "backpressure_signaling",
-            "self_healing"
+            "self_healing",
+            "queue_management",
+            "adaptive_processing"
         ]
     
     async def get_metrics(self) -> Dict[str, Any]:

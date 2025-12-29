@@ -488,13 +488,16 @@ class IngestionAgent(BaseAgent):
             self.logger.error(f"Failed to discover processing agent: {e}")
     
     async def get_capabilities(self) -> list[str]:
+        """Return Phase 3 capabilities"""
         return [
-            "video_ingestion", 
-            "frame_capture", 
+            "video_ingestion",
+            "frame_capture",
             "batch_processing",
             "adaptive_fps",
             "backpressure_handling",
-            "self_healing"
+            "self_healing",
+            "quality_check",
+            "auto_retry"
         ]
     
     async def on_startup(self):
