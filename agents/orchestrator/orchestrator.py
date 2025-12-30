@@ -1,3 +1,4 @@
+# agents/orchestrator/orchestrator.py
 """
 Orchestrator Agent - Updated for Phase 4
 Now includes integrated dashboard
@@ -16,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orchestrator")
 
 
-# Models (same as before)
+# Models
 class AgentRegistration(BaseModel):
     agent_type: str
     endpoint: str
@@ -43,7 +44,10 @@ class OrchestratorAgent:
         
         self.app = FastAPI(title="Orchestrator Agent")
         
-        # Import dashboard
+        # Import dashboard - FIXED PATH
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+        
         from dashboard import OrchestratorDashboard
         self.dashboard = OrchestratorDashboard(self)
         
