@@ -1,9 +1,6 @@
 ﻿"""
-Phase 3: Processing Agent with Autonomy Features
-- Circuit breaker for storage agent
-- Self-healing (retry with backoff)
-- Backpressure signaling to ingestion
-- Adaptive processing rate
+Phase 4: Processing Agent với Enhanced Privacy
+Thêm advanced anonymization với nhiều phương pháp
 """
 import asyncio
 import base64
@@ -23,6 +20,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from base.base_agent import BaseAgent, TaskMessage
+from processing_agent.privacy_enhanced import EnhancedPrivacyManager
 
 
 # Models
@@ -34,32 +32,24 @@ class ProcessingBatch(BaseModel):
 
 
 class CircuitState(str, Enum):
-    CLOSED = "closed"  # Normal operation
-    OPEN = "open"      # Blocking requests
-    HALF_OPEN = "half_open"  # Testing if service recovered
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
 
 
 class CircuitBreaker:
-    """Phase 3: Circuit breaker pattern"""
-    def __init__(
-        self,
-        failure_threshold: int = 5,
-        recovery_timeout: float = 30.0,
-        success_threshold: int = 2
-    ):
+    """Circuit breaker (same as Phase 3)"""
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: float = 30.0, success_threshold: int = 2):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.success_threshold = success_threshold
-        
         self.state = CircuitState.CLOSED
         self.failure_count = 0
         self.success_count = 0
         self.last_failure_time: Optional[float] = None
     
     async def call(self, func, *args, **kwargs):
-        """Execute function with circuit breaker protection"""
         if self.state == CircuitState.OPEN:
-            # Check if we should try recovery
             if time.time() - self.last_failure_time >= self.recovery_timeout:
                 self.state = CircuitState.HALF_OPEN
                 self.success_count = 0
@@ -75,9 +65,7 @@ class CircuitBreaker:
             raise
     
     def _on_success(self):
-        """Handle successful request"""
         self.failure_count = 0
-        
         if self.state == CircuitState.HALF_OPEN:
             self.success_count += 1
             if self.success_count >= self.success_threshold:
@@ -85,20 +73,15 @@ class CircuitBreaker:
                 self.success_count = 0
     
     def _on_failure(self):
-        """Handle failed request"""
         self.failure_count += 1
         self.last_failure_time = time.time()
-        
         if self.failure_count >= self.failure_threshold:
             self.state = CircuitState.OPEN
 
 
 class ProcessingAgent(BaseAgent):
     """
-    Phase 3: Autonomous Processing Agent
-    - Circuit breaker for downstream dependencies
-    - Self-healing with retry logic
-    - Backpressure signaling
+    Phase 4: Processing Agent with Enhanced Privacy
     """
     
     def __init__(self, agent_type: str = "processing", port: int = 8002, **kwargs):
@@ -107,40 +90,39 @@ class ProcessingAgent(BaseAgent):
         self.processing_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
         self.processing_task: Optional[asyncio.Task] = None
         
+        # Phase 4: Enhanced Privacy Manager
+        self.privacy_manager = EnhancedPrivacyManager()
+        
+        # Simple object detector
         self.detector = None
         self.detector_type = "haar_cascade"
         
         self.storage_agent_url: Optional[str] = None
         self.ingestion_agent_url: Optional[str] = None
         
-        # Phase 3: Circuit breaker for storage
-        self.storage_circuit = CircuitBreaker(
-            failure_threshold=5,
-            recovery_timeout=30.0,
-            success_threshold=2
-        )
+        # Circuit breaker
+        self.storage_circuit = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0, success_threshold=2)
         
         # Metrics
         self.processed_batches = 0
         self.processed_frames = 0
         self.detection_count = 0
+        self.anonymized_count = 0  # Phase 4: Track anonymizations
         self.failed_batches = 0
         self.retry_count = 0
         
-        # Backpressure thresholds
+        # Backpressure
         self.queue_high_watermark = 70
         self.queue_low_watermark = 20
         self.last_backpressure_signal = 0
     
     def setup_custom_routes(self):
-        """Setup processing-specific routes"""
+        """Setup processing routes with Phase 4 features"""
         
         @self.app.post("/process/batch")
         async def process_batch(batch: ProcessingBatch):
             try:
                 await self.processing_queue.put(batch)
-                
-                # Check backpressure
                 await self._check_and_signal_backpressure()
                 
                 return {
@@ -148,7 +130,6 @@ class ProcessingAgent(BaseAgent):
                     "status": "queued",
                     "queue_length": self.processing_queue.qsize()
                 }
-                
             except Exception as e:
                 self.logger.error(f"Failed to queue batch: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
@@ -160,6 +141,7 @@ class ProcessingAgent(BaseAgent):
                 "processed_batches": self.processed_batches,
                 "processed_frames": self.processed_frames,
                 "detection_count": self.detection_count,
+                "anonymized_count": self.anonymized_count,  # Phase 4
                 "failed_batches": self.failed_batches,
                 "retry_count": self.retry_count,
                 "circuit_breaker_state": self.storage_circuit.state.value,
@@ -168,10 +150,9 @@ class ProcessingAgent(BaseAgent):
         
         @self.app.get("/process/health")
         async def health_check():
-            """Detailed health check"""
             queue_len = self.processing_queue.qsize()
-            
             health_status = "healthy"
+            
             if queue_len > self.queue_high_watermark:
                 health_status = "degraded"
             if self.storage_circuit.state == CircuitState.OPEN:
@@ -187,19 +168,38 @@ class ProcessingAgent(BaseAgent):
         
         @self.app.post("/process/circuit/reset")
         async def reset_circuit():
-            """Manual circuit breaker reset"""
             self.storage_circuit.state = CircuitState.CLOSED
             self.storage_circuit.failure_count = 0
             self.logger.info("Circuit breaker manually reset")
             return {"status": "reset", "state": CircuitState.CLOSED.value}
+        
+        # Phase 4: Privacy configuration endpoints
+        @self.app.post("/process/privacy/zone")
+        async def add_privacy_zone(x: int, y: int, width: int, height: int):
+            """Add a privacy zone"""
+            self.privacy_manager.add_privacy_zone(x, y, width, height)
+            return {
+                "status": "added",
+                "zone": {"x": x, "y": y, "width": width, "height": height},
+                "total_zones": len(self.privacy_manager.privacy_zones)
+            }
+        
+        @self.app.delete("/process/privacy/zone/{index}")
+        async def remove_privacy_zone(index: int):
+            """Remove a privacy zone"""
+            self.privacy_manager.remove_privacy_zone(index)
+            return {"status": "removed", "index": index}
+        
+        @self.app.get("/process/privacy/stats")
+        async def get_privacy_stats():
+            """Get privacy/anonymization statistics"""
+            return self.privacy_manager.get_anonymization_stats()
     
     async def handle_message(self, message: TaskMessage) -> Dict[str, Any]:
-        """Handle incoming messages"""
         if message.message_type == "process_batch":
             try:
                 batch = ProcessingBatch(**message.payload)
                 await self.processing_queue.put(batch)
-                
                 await self._check_and_signal_backpressure()
                 
                 return {
@@ -214,25 +214,20 @@ class ProcessingAgent(BaseAgent):
         return await super().handle_message(message)
     
     async def _check_and_signal_backpressure(self):
-        """Phase 3: Signal backpressure to ingestion agent"""
         queue_len = self.processing_queue.qsize()
         now = time.time()
         
-        # Cooldown: don't spam signals
         if now - self.last_backpressure_signal < 10:
             return
         
         if queue_len > self.queue_high_watermark:
-            # Signal to reduce FPS
             await self._signal_ingestion("reduce_fps", {
                 "queue_length": queue_len,
                 "pressure_level": "high",
                 "suggested_fps": 10
             })
             self.last_backpressure_signal = now
-            
         elif queue_len < self.queue_low_watermark:
-            # Signal to increase FPS
             await self._signal_ingestion("increase_fps", {
                 "queue_length": queue_len,
                 "pressure_level": "normal",
@@ -241,7 +236,6 @@ class ProcessingAgent(BaseAgent):
             self.last_backpressure_signal = now
     
     async def _signal_ingestion(self, action: str, data: Dict):
-        """Send backpressure signal to ingestion agent"""
         if not self.ingestion_agent_url:
             await self._discover_ingestion_agent()
         
@@ -255,37 +249,29 @@ class ProcessingAgent(BaseAgent):
                 payload={"action": action, "data": data},
                 receiver_url=self.ingestion_agent_url
             )
-            
             self.logger.info(f"📊 Sent backpressure signal: {action}")
-            
         except Exception as e:
             self.logger.warning(f"Failed to signal ingestion: {e}")
     
     def _load_detector(self):
-        """Load object detector"""
         try:
-            if self.detector_type == "haar_cascade":
-                cascade_path = cv2.data.haarcascades + 'haarcascade_car.xml'
-                
-                if not os.path.exists(cascade_path):
-                    cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-                    self.logger.warning("Using face cascade for testing")
-                
-                self.detector = cv2.CascadeClassifier(cascade_path)
-                self.logger.info(f"Loaded detector: {cascade_path}")
+            cascade_path = cv2.data.haarcascades + 'haarcascade_car.xml'
+            if not os.path.exists(cascade_path):
+                cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                self.logger.warning("Using face cascade for testing")
             
+            self.detector = cv2.CascadeClassifier(cascade_path)
+            self.logger.info(f"Loaded detector: {cascade_path}")
         except Exception as e:
             self.logger.error(f"Failed to load detector: {e}")
             self.detector = None
     
     def _detect_objects(self, frame: np.ndarray) -> List[Dict[str, Any]]:
-        """Detect objects in frame"""
         if self.detector is None:
             return []
         
         try:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
             detections = self.detector.detectMultiScale(
                 gray,
                 scaleFactor=1.1,
@@ -303,38 +289,22 @@ class ProcessingAgent(BaseAgent):
                 })
             
             return results
-            
         except Exception as e:
             self.logger.error(f"Detection failed: {e}")
             return []
     
-    def _anonymize_frame(self, frame: np.ndarray, detections: List[Dict[str, Any]]) -> np.ndarray:
-        """Anonymize detected objects"""
-        anonymized = frame.copy()
-        
-        for det in detections:
-            x, y, w, h = det['bbox']
-            roi = anonymized[y:y+h, x:x+w]
-            blurred = cv2.GaussianBlur(roi, (99, 99), 30)
-            anonymized[y:y+h, x:x+w] = blurred
-        
-        return anonymized
-    
     async def _process_batch_worker(self):
-        """Worker that processes batches with retry logic"""
         while True:
             try:
                 batch = await self.processing_queue.get()
                 
                 self.logger.info(f"Processing batch {batch.batch_id} with {len(batch.frames)} frames")
                 
-                # Process with retry
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
                         results = await self._process_batch(batch)
                         
-                        # Send to storage with circuit breaker
                         await self.storage_circuit.call(
                             self._send_to_storage_with_retry,
                             batch.batch_id,
@@ -344,7 +314,6 @@ class ProcessingAgent(BaseAgent):
                         
                         self.processed_batches += 1
                         break
-                        
                     except Exception as e:
                         self.retry_count += 1
                         
@@ -357,18 +326,24 @@ class ProcessingAgent(BaseAgent):
                             await asyncio.sleep(wait_time)
                         else:
                             self.failed_batches += 1
-                            self.logger.error(
-                                f"Batch {batch.batch_id} failed after {max_retries} attempts"
-                            )
+                            self.logger.error(f"Batch {batch.batch_id} failed after {max_retries} attempts")
                 
                 self.processing_queue.task_done()
-                
             except Exception as e:
                 self.logger.error(f"Batch processing error: {e}")
     
     async def _process_batch(self, batch: ProcessingBatch) -> List[Dict]:
-        """Process batch of frames"""
+        """
+        Phase 4: Process batch with enhanced privacy
+        """
         results = []
+        
+        # Get config
+        config = batch.config or {}
+        enable_anonymization = config.get('enable_anonymization', False)
+        anonymization_method = config.get('anonymization_method', 'blur')
+        detect_faces = config.get('detect_faces', True)
+        detect_plates = config.get('detect_plates', False)
         
         for frame_data in batch.frames:
             frame_b64 = frame_data['data']
@@ -380,14 +355,25 @@ class ProcessingAgent(BaseAgent):
                 self.logger.error(f"Failed to decode frame {frame_data['frame_id']}")
                 continue
             
+            # Object detection
             detections = self._detect_objects(frame)
             self.detection_count += len(detections)
             
+            # Phase 4: Enhanced anonymization
             anonymized = False
-            if batch.config and batch.config.get('enable_anonymization', False):
-                frame = self._anonymize_frame(frame, detections)
-                anonymized = True
+            privacy_stats = {}
             
+            if enable_anonymization:
+                frame, privacy_stats = self.privacy_manager.anonymize_frame(
+                    frame,
+                    method=anonymization_method,
+                    detect_faces=detect_faces,
+                    detect_plates=detect_plates
+                )
+                anonymized = True
+                self.anonymized_count += 1
+            
+            # Encode processed frame
             _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             processed_b64 = base64.b64encode(buffer).decode('utf-8')
             
@@ -398,6 +384,7 @@ class ProcessingAgent(BaseAgent):
                 "detections": detections,
                 "detection_count": len(detections),
                 "anonymized": anonymized,
+                "privacy_stats": privacy_stats,  # Phase 4
                 "processed_frame": processed_b64,
                 "metadata": frame_data['metadata']
             }
@@ -407,13 +394,7 @@ class ProcessingAgent(BaseAgent):
         
         return results
     
-    async def _send_to_storage_with_retry(
-        self, 
-        batch_id: str, 
-        source_id: str, 
-        results: List[Dict]
-    ):
-        """Send to storage with retry logic"""
+    async def _send_to_storage_with_retry(self, batch_id: str, source_id: str, results: List[Dict]):
         if not self.storage_agent_url:
             await self._discover_storage_agent()
         
@@ -437,18 +418,14 @@ class ProcessingAgent(BaseAgent):
         self.logger.info(f"Sent results for batch {batch_id} to storage")
     
     async def _discover_storage_agent(self):
-        """Discover storage agent"""
         if not self.orchestrator_url:
             return
         
         try:
-            response = await self.http_client.get(
-                f"{self.orchestrator_url}/agents"
-            )
+            response = await self.http_client.get(f"{self.orchestrator_url}/agents")
             response.raise_for_status()
             
             agents = response.json()['agents']
-            
             for agent in agents:
                 if agent['agent_type'] == 'storage':
                     self.storage_agent_url = "http://storage:8003"
@@ -456,42 +433,36 @@ class ProcessingAgent(BaseAgent):
                     return
             
             self.logger.warning("No storage agent found")
-            
         except Exception as e:
             self.logger.error(f"Failed to discover storage agent: {e}")
     
     async def _discover_ingestion_agent(self):
-        """Discover ingestion agent"""
         if not self.orchestrator_url:
             return
         
         try:
-            response = await self.http_client.get(
-                f"{self.orchestrator_url}/agents"
-            )
+            response = await self.http_client.get(f"{self.orchestrator_url}/agents")
             response.raise_for_status()
             
             agents = response.json()['agents']
-            
             for agent in agents:
                 if agent['agent_type'] == 'ingestion':
                     self.ingestion_agent_url = "http://ingestion:8001"
                     self.logger.info(f"Found ingestion agent")
                     return
-            
         except Exception as e:
             self.logger.error(f"Failed to discover ingestion agent: {e}")
     
     async def get_capabilities(self) -> list[str]:
         return [
-            "object_detection", 
-            "frame_processing", 
+            "object_detection",
+            "frame_processing",
             "anonymization",
+            "multi_method_privacy",  # Phase 4
+            "privacy_zones",  # Phase 4
             "circuit_breaker",
             "backpressure_signaling",
-            "self_healing",
-            "queue_management",
-            "adaptive_processing"
+            "self_healing"
         ]
     
     async def get_metrics(self) -> Dict[str, Any]:
@@ -501,6 +472,7 @@ class ProcessingAgent(BaseAgent):
             "processed_batches": self.processed_batches,
             "processed_frames": self.processed_frames,
             "detection_count": self.detection_count,
+            "anonymized_count": self.anonymized_count,  # Phase 4
             "failed_batches": self.failed_batches,
             "retry_count": self.retry_count,
             "circuit_breaker_state": self.storage_circuit.state.value
@@ -508,10 +480,8 @@ class ProcessingAgent(BaseAgent):
         return base_metrics
     
     async def on_startup(self):
-        self.logger.info("Phase 3 Processing Agent started with autonomy features")
-        
+        self.logger.info("Phase 4 Processing Agent started with Enhanced Privacy")
         self._load_detector()
-        
         self.processing_task = asyncio.create_task(self._process_batch_worker())
         
         if self.orchestrator_url:
@@ -522,7 +492,6 @@ class ProcessingAgent(BaseAgent):
     async def on_shutdown(self):
         if self.processing_task:
             self.processing_task.cancel()
-        
         self.logger.info("Processing Agent stopped")
 
 

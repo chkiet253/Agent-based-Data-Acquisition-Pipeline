@@ -44,7 +44,7 @@ class OrchestratorAgent:
         self.app = FastAPI(title="Orchestrator Agent")
         
         # Import dashboard
-        from dashboard import OrchestratorDashboard
+        from orchestrator.dashboard import OrchestratorDashboard
         self.dashboard = OrchestratorDashboard(self)
         
         self._setup_routes()
