@@ -1,21 +1,14 @@
 """
-Phase 3 Integration Test - Autonomy Features
-Tests:
-1. Backpressure handling
-2. Self-healing (retry logic)
-3. Adaptive FPS/batch size
-4. Circuit breaker
-5. Storage fallback
-6. Auto cleanup
+Phase 3 Integration Test - FIXED VERSION
+All 7 tests should pass now
 """
 import asyncio
 import httpx
 import time
 from pathlib import Path
-from datetime import datetime
 
 
-class Phase3Tester:
+class Phase3TesterFixed:
     def __init__(self):
         self.orchestrator_url = "http://localhost:8000"
         self.ingestion_url = "http://localhost:8001"
@@ -70,17 +63,16 @@ class Phase3Tester:
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                # Start with high FPS (will trigger backpressure)
                 config = {
                     "source_id": "test_adaptive",
                     "video_path": self.test_video_container,
-                    "fps": 30,  # High initial FPS
+                    "fps": 30,
                     "batch_size": 20,
                     "start_frame": 0,
                     "end_frame": 200,
                     "min_fps": 5,
                     "max_fps": 45,
-                    "adaptive_mode": True  # Enable adaptive mode
+                    "adaptive_mode": True
                 }
                 
                 response = await client.post(
@@ -95,20 +87,17 @@ class Phase3Tester:
                 job_id = response.json()['job_id']
                 print(f"✅ Started adaptive ingestion: {job_id}")
                 
-                # Monitor FPS changes
                 initial_fps = 30
                 fps_adjusted = False
                 
                 for i in range(10):
                     await asyncio.sleep(3)
                     
-                    # Check ingestion status
                     status_resp = await client.get(
                         f"{self.ingestion_url}/ingest/{job_id}/status"
                     )
                     status = status_resp.json()
                     
-                    # Check processing queue
                     proc_resp = await client.get(
                         f"{self.processing_url}/process/status"
                     )
@@ -120,7 +109,6 @@ class Phase3Tester:
                     print(f"   [{i*3}s] FPS: {current_fps}, Queue: {queue_len}, "
                           f"Frames: {status['frames_ingested']}, Dropped: {status['frames_dropped']}")
                     
-                    # Check if FPS was adjusted
                     if current_fps != initial_fps:
                         fps_adjusted = True
                         print(f"   🔻 FPS adjusted: {initial_fps} → {current_fps}")
@@ -145,7 +133,6 @@ class Phase3Tester:
         
         try:
             async with httpx.AsyncClient() as client:
-                # Get processing health
                 response = await client.get(
                     f"{self.processing_url}/process/health"
                 )
@@ -158,7 +145,6 @@ class Phase3Tester:
                     print(f"   Status: {health['status']}")
                     print(f"   Queue: {health['queue_length']}/{health['queue_capacity']}")
                     
-                    # Test manual circuit reset
                     if circuit_state == "open":
                         reset_resp = await client.post(
                             f"{self.processing_url}/process/circuit/reset"
@@ -181,7 +167,6 @@ class Phase3Tester:
         
         try:
             async with httpx.AsyncClient() as client:
-                # Get storage status
                 response = await client.get(f"{self.storage_url}/storage/status")
                 
                 if response.status_code == 200:
@@ -194,7 +179,6 @@ class Phase3Tester:
                     print(f"   Fallback count: {status['fallback_count']}")
                     print(f"   Cleanup count: {status['cleanup_count']}")
                     
-                    # Test manual mode switch
                     print("\n   Testing manual mode switch...")
                     current_mode = status['storage_mode']
                     new_mode = "fallback" if current_mode == "primary" else "primary"
@@ -207,7 +191,6 @@ class Phase3Tester:
                     if switch_resp.status_code == 200:
                         print(f"✅ Mode switch successful: {current_mode} → {new_mode}")
                         
-                        # Switch back
                         await asyncio.sleep(1)
                         await client.post(
                             f"{self.storage_url}/storage/mode/switch",
@@ -225,22 +208,27 @@ class Phase3Tester:
             return False
     
     async def test_self_healing(self):
-        """Test 5: Self-healing with retry logic"""
+        """Test 5: Self-healing with retry logic - FIXED"""
         print("\n🔍 Test 5: Self-Healing (Retry Logic)")
         
         try:
             async with httpx.AsyncClient() as client:
-                # Check metrics for retry counts
-                ing_status = await client.get(f"{self.ingestion_url}/ingest/status")
+                # ✅ FIXED: Only check processing status (no ingestion status without job_id)
                 proc_status = await client.get(f"{self.processing_url}/process/status")
                 
-                if ing_status.status_code == 200 and proc_status.status_code == 200:
+                if proc_status.status_code == 200:
                     proc_data = proc_status.json()
                     
                     print(f"✅ Self-healing metrics:")
                     print(f"   Processing retry count: {proc_data.get('retry_count', 0)}")
                     print(f"   Failed batches: {proc_data.get('failed_batches', 0)}")
-                    print(f"   Success rate: {proc_data['processed_batches']}/({proc_data['processed_batches']}+{proc_data['failed_batches']})")
+                    print(f"   Processed batches: {proc_data.get('processed_batches', 0)}")
+                    
+                    # Calculate success rate
+                    total = proc_data.get('processed_batches', 0) + proc_data.get('failed_batches', 0)
+                    if total > 0:
+                        success_rate = (proc_data.get('processed_batches', 0) / total) * 100
+                        print(f"   Success rate: {success_rate:.1f}%")
                     
                     # If retries occurred, self-healing is working
                     if proc_data.get('retry_count', 0) > 0:
@@ -250,7 +238,7 @@ class Phase3Tester:
                     
                     return True
                 else:
-                    print("⚠️  Could not get status")
+                    print(f"⚠️  Processing status returned: {proc_status.status_code}")
                     return False
                     
         except Exception as e:
@@ -258,30 +246,32 @@ class Phase3Tester:
             return False
     
     async def test_backpressure_metrics(self):
-        """Test 6: Backpressure metrics"""
+        """Test 6: Backpressure metrics - FIXED"""
         print("\n🔍 Test 6: Backpressure Metrics")
         
         try:
             async with httpx.AsyncClient() as client:
-                # Get all agent statuses
-                ing_resp = await client.get(f"{self.ingestion_url}/ingest/status")
+                # ✅ FIXED: Only get processing and storage (no ingestion without job_id)
                 proc_resp = await client.get(f"{self.processing_url}/process/status")
                 stor_resp = await client.get(f"{self.storage_url}/storage/status")
                 
-                if all(r.status_code == 200 for r in [ing_resp, proc_resp, stor_resp]):
+                if proc_resp.status_code == 200 and stor_resp.status_code == 200:
                     proc_data = proc_resp.json()
                     stor_data = stor_resp.json()
                     
                     print(f"✅ Pipeline pressure metrics:")
                     print(f"   Processing queue: {proc_data['queue_length']}")
                     print(f"   Storage queue: {stor_data['queue_length']}")
+                    print(f"   Processed batches: {proc_data.get('processed_batches', 0)}")
+                    print(f"   Stored batches: {stor_data.get('batches_stored', 0)}")
                     
                     # Determine pressure level
-                    if proc_data['queue_length'] > 70:
+                    queue_len = proc_data['queue_length']
+                    if queue_len > 70:
                         pressure = "CRITICAL"
-                    elif proc_data['queue_length'] > 40:
+                    elif queue_len > 40:
                         pressure = "HIGH"
-                    elif proc_data['queue_length'] > 20:
+                    elif queue_len > 20:
                         pressure = "MODERATE"
                     else:
                         pressure = "NORMAL"
@@ -290,7 +280,9 @@ class Phase3Tester:
                     
                     return True
                 else:
-                    print("⚠️  Could not get all statuses")
+                    print(f"⚠️  Status check failed")
+                    print(f"   Processing: {proc_resp.status_code}")
+                    print(f"   Storage: {stor_resp.status_code}")
                     return False
                     
         except Exception as e:
@@ -307,7 +299,6 @@ class Phase3Tester:
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                # Start a job
                 config = {
                     "source_id": "test_pause",
                     "video_path": self.test_video_container,
@@ -328,14 +319,11 @@ class Phase3Tester:
                 
                 job_id = response.json()['job_id']
                 
-                # Wait a bit
                 await asyncio.sleep(3)
                 
-                # Get initial frames count
                 status1 = await client.get(f"{self.ingestion_url}/ingest/{job_id}/status")
                 frames1 = status1.json()['frames_ingested']
                 
-                # Pause
                 pause_resp = await client.post(
                     f"{self.ingestion_url}/ingest/{job_id}/pause"
                 )
@@ -343,17 +331,15 @@ class Phase3Tester:
                 if pause_resp.status_code == 200:
                     print(f"✅ Job paused at {frames1} frames")
                     
-                    # Wait and check frames didn't increase much
                     await asyncio.sleep(3)
                     status2 = await client.get(f"{self.ingestion_url}/ingest/{job_id}/status")
                     frames2 = status2.json()['frames_ingested']
                     
-                    if frames2 - frames1 < 5:  # Should be mostly paused
+                    if frames2 - frames1 < 5:
                         print(f"✅ Pause working: {frames1} → {frames2} frames")
                     else:
                         print(f"⚠️  Pause may not be working: {frames1} → {frames2}")
                     
-                    # Resume
                     resume_resp = await client.post(
                         f"{self.ingestion_url}/ingest/{job_id}/pause"
                     )
@@ -361,7 +347,6 @@ class Phase3Tester:
                     if resume_resp.status_code == 200:
                         print("✅ Job resumed")
                     
-                    # Stop job
                     await client.post(f"{self.ingestion_url}/ingest/{job_id}/stop")
                     
                     return True
@@ -376,33 +361,19 @@ class Phase3Tester:
     async def run_all_tests(self):
         """Run all Phase 3 tests"""
         print("=" * 60)
-        print("🚀 PHASE 3 - AUTONOMY FEATURES TESTS")
+        print("🚀 PHASE 3 - AUTONOMY FEATURES TESTS (FIXED)")
         print("=" * 60)
         
         results = {}
         
-        # Test 1: Capabilities
         results['capabilities'] = await self.test_agent_capabilities()
-        
-        # Test 2: Adaptive FPS
         results['adaptive_fps'] = await self.test_adaptive_fps()
-        
-        # Test 3: Circuit breaker
         results['circuit_breaker'] = await self.test_circuit_breaker()
-        
-        # Test 4: Storage fallback
         results['storage_fallback'] = await self.test_storage_fallback()
-        
-        # Test 5: Self-healing
         results['self_healing'] = await self.test_self_healing()
-        
-        # Test 6: Backpressure metrics
         results['backpressure_metrics'] = await self.test_backpressure_metrics()
-        
-        # Test 7: Pause/resume
         results['pause_resume'] = await self.test_pause_resume()
         
-        # Summary
         print("\n" + "=" * 60)
         print("📊 TEST SUMMARY")
         print("=" * 60)
@@ -417,11 +388,10 @@ class Phase3Tester:
         print(f"\n🎯 Results: {passed}/{total} tests passed ({passed/total*100:.1f}%)")
         
         if passed == total:
-            print("\n🎉 Phase 3 Autonomy features are working!")
+            print("\n🎉 ALL TESTS PASSED! Phase 3 Autonomy features are working!")
         else:
             print(f"\n⚠️  {total - passed} test(s) failed.")
         
-        # Print autonomy summary
         print("\n📋 AUTONOMY FEATURES SUMMARY:")
         print("  1. ✅ Backpressure handling - Adaptive FPS")
         print("  2. ✅ Self-healing - Retry with exponential backoff")
@@ -431,11 +401,11 @@ class Phase3Tester:
         print("  6. ✅ Auto cleanup - Manages disk space")
         print("  7. ✅ Pause/Resume - Controlled data flow")
         
-        return passed >= total - 1
+        return passed == total
 
 
 async def main():
-    tester = Phase3Tester()
+    tester = Phase3TesterFixed()
     
     print("\n⏳ Waiting 10 seconds for services to be ready...")
     await asyncio.sleep(10)
