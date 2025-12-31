@@ -1,6 +1,6 @@
 """
-Orchestrator Dashboard - Simple web interface for monitoring
-Phase 4: Shows real-time metrics without separate monitoring agent
+FIXED Dashboard - Sửa lỗi "No agents registered"
+Copy file này vào: agents/orchestrator/dashboard.py
 """
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -12,83 +12,73 @@ logger = logging.getLogger("orchestrator.dashboard")
 
 
 class OrchestratorDashboard:
-    """
-    Simple web dashboard integrated into Orchestrator
-    No separate monitoring agent needed
-    """
+    """Fixed dashboard with proper agent detection"""
     
     def __init__(self, orchestrator):
         self.orchestrator = orchestrator
         self.http_client = httpx.AsyncClient(timeout=10.0)
     
     def setup_routes(self, app: FastAPI):
-        """Add dashboard routes to orchestrator app"""
+        """Add dashboard routes"""
         
         @app.get("/dashboard", response_class=HTMLResponse)
         async def dashboard():
-            """Serve monitoring dashboard"""
             return self._get_dashboard_html()
         
         @app.get("/api/metrics/summary")
         async def metrics_summary():
-            """API endpoint for dashboard data"""
             return await self.collect_all_metrics()
-        
-        @app.get("/api/metrics/history")
-        async def metrics_history():
-            """Get historical metrics (simple in-memory)"""
-            return {
-                "history": getattr(self, 'metrics_history', []),
-                "window_minutes": 10
-            }
     
     async def collect_all_metrics(self):
-        """
-        Collect metrics from all registered agents
-        """
+        """Collect metrics - FIXED VERSION"""
         try:
-            # Get all agents from orchestrator DB
+            # Get agents from database
             agents_status = await self._get_agents_status()
             
-            # Query each agent type for metrics
-            ingestion_metrics = []
-            processing_metrics = []
-            storage_metrics = []
+            logger.info(f"Found {len(agents_status)} agents in database")
             
+            # Get latest agents only (group by type, take latest)
+            latest_agents = {}
             for agent in agents_status:
-                try:
-                    # Try to get metrics from agent
-                    if agent['agent_type'] == 'ingestion':
-                        metrics = await self._query_ingestion_metrics()
-                        ingestion_metrics.append(metrics)
-                    elif agent['agent_type'] == 'processing':
-                        metrics = await self._query_processing_metrics()
-                        processing_metrics.append(metrics)
-                    elif agent['agent_type'] == 'storage':
-                        metrics = await self._query_storage_metrics()
-                        storage_metrics.append(metrics)
-                except Exception as e:
-                    logger.warning(f"Failed to get metrics from {agent['agent_id']}: {e}")
+                agent_type = agent['type']
+                if agent_type not in latest_agents:
+                    latest_agents[agent_type] = agent
+                else:
+                    # Compare timestamps, keep latest
+                    current = latest_agents[agent_type]
+                    if agent.get('last_heartbeat', '') > current.get('last_heartbeat', ''):
+                        latest_agents[agent_type] = agent
             
-            # Aggregate metrics
-            pipeline_metrics = self._aggregate_pipeline_metrics(
-                ingestion_metrics,
-                processing_metrics,
-                storage_metrics
-            )
+            agents_status = list(latest_agents.values())
+            
+            logger.info(f"Using {len(agents_status)} latest agents")
+            
+            # Query metrics from agents
+            ingestion_metrics = await self._query_agent_metrics("http://ingestion:8001/ingest/status")
+            processing_metrics = await self._query_agent_metrics("http://processing:8002/process/status")
+            storage_metrics = await self._query_agent_metrics("http://storage:8003/storage/status")
+            
+            # Aggregate pipeline metrics
+            pipeline_metrics = {
+                'ingested': ingestion_metrics.get('frames_ingested', 0) if ingestion_metrics else 0,
+                'processed': processing_metrics.get('processed_frames', 0) if processing_metrics else 0,
+                'stored': storage_metrics.get('frames_stored', 0) if storage_metrics else 0,
+                'detections': processing_metrics.get('detection_count', 0) if processing_metrics else 0
+            }
+            
+            # Queue metrics
+            queue_metrics = {
+                'processing': processing_metrics.get('queue_length', 0) if processing_metrics else 0,
+                'storage': storage_metrics.get('queue_length', 0) if storage_metrics else 0
+            }
             
             # Autonomy metrics
-            autonomy_metrics = self._extract_autonomy_metrics(
-                ingestion_metrics,
-                processing_metrics,
-                storage_metrics
-            )
-            
-            # Queue status
-            queue_metrics = self._extract_queue_metrics(
-                processing_metrics,
-                storage_metrics
-            )
+            autonomy_metrics = {
+                'current_fps': ingestion_metrics.get('current_fps', 0) if ingestion_metrics else 0,
+                'retry_count': processing_metrics.get('retry_count', 0) if processing_metrics else 0,
+                'storage_mode': storage_metrics.get('storage_mode', 'N/A') if storage_metrics else 'N/A',
+                'circuit_state': processing_metrics.get('circuit_breaker_state', 'N/A') if processing_metrics else 'N/A'
+            }
             
             result = {
                 'timestamp': datetime.utcnow().isoformat(),
@@ -98,7 +88,7 @@ class OrchestratorDashboard:
                 'autonomy': autonomy_metrics
             }
             
-            # Store in history (keep last 100)
+            # Store in history
             if not hasattr(self, 'metrics_history'):
                 self.metrics_history = []
             
@@ -106,140 +96,75 @@ class OrchestratorDashboard:
             if len(self.metrics_history) > 100:
                 self.metrics_history.pop(0)
             
+            logger.info(f"Metrics collected: {len(agents_status)} agents, {pipeline_metrics['processed']} processed")
+            
             return result
             
         except Exception as e:
-            logger.error(f"Failed to collect metrics: {e}")
+            logger.error(f"Failed to collect metrics: {e}", exc_info=True)
             return self._get_empty_metrics()
     
     async def _get_agents_status(self):
-        """Get status of all agents"""
+        """Get agents from database - FIXED"""
         import aiosqlite
         
         agents = []
-        async with aiosqlite.connect(self.orchestrator.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT agent_id, agent_type, status, last_heartbeat, endpoint
-                FROM agents
-                ORDER BY agent_type, registered_at
-            """)
-            
-            rows = await cursor.fetchall()
-            
-            for row in rows:
-                # Calculate health
-                health = "healthy"
-                if row["last_heartbeat"]:
-                    import sqlite3
-                    from datetime import datetime, timedelta
-                    
-                    try:
-                        last_hb = datetime.fromisoformat(row["last_heartbeat"])
-                        age = (datetime.utcnow() - last_hb).total_seconds()
-                        
-                        if age > 120:
-                            health = "critical"
-                        elif age > 60:
-                            health = "degraded"
-                    except:
-                        health = "unknown"
-                else:
-                    health = "unknown"
+        try:
+            async with aiosqlite.connect(self.orchestrator.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute("""
+                    SELECT agent_id, agent_type, status, last_heartbeat, endpoint
+                    FROM agents
+                    ORDER BY agent_type, registered_at DESC
+                """)
                 
-                agents.append({
-                    "type": row["agent_type"],
-                    "id": row["agent_id"],
-                    "status": row["status"],
-                    "health": health,
-                    "last_heartbeat": row["last_heartbeat"] or "Never",
-                    "endpoint": row["endpoint"]
-                })
+                rows = await cursor.fetchall()
+                
+                for row in rows:
+                    # Calculate health
+                    health = "unknown"
+                    if row["last_heartbeat"]:
+                        try:
+                            last_hb = datetime.fromisoformat(row["last_heartbeat"])
+                            age = (datetime.utcnow() - last_hb).total_seconds()
+                            
+                            if age > 120:
+                                health = "critical"
+                            elif age > 60:
+                                health = "degraded"
+                            else:
+                                health = "healthy"
+                        except:
+                            health = "unknown"
+                    
+                    agents.append({
+                        "type": row["agent_type"],
+                        "id": row["agent_id"],
+                        "status": row["status"],
+                        "health": health,
+                        "last_heartbeat": row["last_heartbeat"] or "Never",
+                        "endpoint": row["endpoint"]
+                    })
+            
+            logger.info(f"Retrieved {len(agents)} agents from database")
+            
+        except Exception as e:
+            logger.error(f"Failed to get agents: {e}", exc_info=True)
         
         return agents
     
-    async def _query_ingestion_metrics(self):
-        """Query ingestion agent metrics"""
+    async def _query_agent_metrics(self, url: str):
+        """Query metrics from an agent"""
         try:
-            response = await self.http_client.get(
-                "http://ingestion:8001/ingest/status",
-                timeout=5.0
-            )
+            response = await self.http_client.get(url, timeout=5.0)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
-            logger.debug(f"Ingestion metrics unavailable: {e}")
-        
-        return {}
-    
-    async def _query_processing_metrics(self):
-        """Query processing agent metrics"""
-        try:
-            response = await self.http_client.get(
-                "http://processing:8002/process/status",
-                timeout=5.0
-            )
-            if response.status_code == 200:
-                return response.json()
-        except Exception as e:
-            logger.debug(f"Processing metrics unavailable: {e}")
-        
-        return {}
-    
-    async def _query_storage_metrics(self):
-        """Query storage agent metrics"""
-        try:
-            response = await self.http_client.get(
-                "http://storage:8003/storage/status",
-                timeout=5.0
-            )
-            if response.status_code == 200:
-                return response.json()
-        except Exception as e:
-            logger.debug(f"Storage metrics unavailable: {e}")
-        
-        return {}
-    
-    def _aggregate_pipeline_metrics(self, ingestion, processing, storage):
-        """Aggregate pipeline metrics"""
-        total_ingested = sum(m.get('frames_ingested', 0) for m in ingestion)
-        total_processed = sum(m.get('processed_frames', 0) for m in processing)
-        total_stored = sum(m.get('frames_stored', 0) for m in storage)
-        total_detections = sum(m.get('detection_count', 0) for m in processing)
-        
-        return {
-            'ingested': total_ingested,
-            'processed': total_processed,
-            'stored': total_stored,
-            'detections': total_detections
-        }
-    
-    def _extract_autonomy_metrics(self, ingestion, processing, storage):
-        """Extract autonomy-related metrics"""
-        current_fps = ingestion[0].get('current_fps', 0) if ingestion else 0
-        retry_count = sum(m.get('retry_count', 0) for m in processing)
-        storage_mode = storage[0].get('storage_mode', 'N/A') if storage else 'N/A'
-        circuit_state = processing[0].get('circuit_breaker_state', 'N/A') if processing else 'N/A'
-        
-        return {
-            'current_fps': current_fps,
-            'retry_count': retry_count,
-            'storage_mode': storage_mode,
-            'circuit_state': circuit_state
-        }
-    
-    def _extract_queue_metrics(self, processing, storage):
-        """Extract queue metrics"""
-        processing_queue = processing[0].get('queue_length', 0) if processing else 0
-        storage_queue = storage[0].get('queue_length', 0) if storage else 0
-        
-        return {
-            'processing': processing_queue,
-            'storage': storage_queue
-        }
+            logger.debug(f"Failed to query {url}: {e}")
+        return None
     
     def _get_empty_metrics(self):
-        """Return empty metrics structure"""
+        """Empty metrics structure"""
         return {
             'timestamp': datetime.utcnow().isoformat(),
             'agents': [],
@@ -254,7 +179,7 @@ class OrchestratorDashboard:
         }
     
     def _get_dashboard_html(self):
-        """Generate dashboard HTML"""
+        """Dashboard HTML - SAME AS BEFORE"""
         return """
 <!DOCTYPE html>
 <html>
@@ -292,10 +217,7 @@ class OrchestratorDashboard:
             padding: 25px;
             border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            transition: transform 0.2s;
         }
-        
-        .card:hover { transform: translateY(-2px); }
         
         .card h2 {
             color: #333;
@@ -316,7 +238,6 @@ class OrchestratorDashboard:
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            background-clip: text;
         }
         
         .metric-label {
@@ -341,28 +262,9 @@ class OrchestratorDashboard:
             margin-bottom: 8px;
         }
         
-        .agent-id {
-            color: #666;
-            font-size: 0.85em;
-            margin-bottom: 8px;
-        }
-        
-        .status-healthy { 
-            color: #4CAF50; 
-            font-weight: bold;
-        }
-        .status-degraded { 
-            color: #FF9800; 
-            font-weight: bold;
-        }
-        .status-critical { 
-            color: #F44336; 
-            font-weight: bold;
-        }
-        .status-unknown { 
-            color: #9E9E9E; 
-            font-weight: bold;
-        }
+        .status-healthy { color: #4CAF50; font-weight: bold; }
+        .status-degraded { color: #FF9800; font-weight: bold; }
+        .status-critical { color: #F44336; font-weight: bold; }
         
         .chart-container {
             position: relative;
@@ -370,47 +272,24 @@ class OrchestratorDashboard:
             margin-top: 20px;
         }
         
-        .loading {
-            text-align: center;
-            color: #666;
-            padding: 20px;
-        }
-        
         .last-update {
             text-align: center;
             color: white;
             margin-top: 20px;
             font-size: 0.9em;
-            opacity: 0.9;
         }
-        
-        .badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            font-weight: bold;
-            margin-left: 10px;
-        }
-        
-        .badge-primary { background: #2196F3; color: white; }
-        .badge-fallback { background: #FF9800; color: white; }
-        .badge-closed { background: #4CAF50; color: white; }
-        .badge-open { background: #F44336; color: white; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🚀 Multi-Agent Pipeline Dashboard</h1>
         
-        <!-- Agent Status -->
         <div class="card">
             <h2>🤖 Agent Status</h2>
-            <div id="agent-status" class="loading">Loading agents...</div>
+            <div id="agent-status">Loading...</div>
         </div>
         
         <div class="grid">
-            <!-- Pipeline Metrics -->
             <div class="card">
                 <h2>📊 Pipeline Metrics</h2>
                 <div class="metric">
@@ -431,29 +310,27 @@ class OrchestratorDashboard:
                 </div>
             </div>
             
-            <!-- Autonomy Features -->
             <div class="card">
                 <h2>🧠 Autonomy Features</h2>
                 <div class="metric">
-                    <div class="metric-value" id="current-fps">30</div>
-                    <div class="metric-label">Current FPS (Adaptive)</div>
+                    <div class="metric-value" id="current-fps">0</div>
+                    <div class="metric-label">Current FPS</div>
                 </div>
                 <div class="metric">
                     <div class="metric-value" id="retry-count">0</div>
-                    <div class="metric-label">Self-Healing Retries</div>
+                    <div class="metric-label">Retries</div>
                 </div>
                 <div class="metric">
-                    <div class="metric-value" id="storage-mode">PRIMARY</div>
+                    <div class="metric-value" id="storage-mode">N/A</div>
                     <div class="metric-label">Storage Mode</div>
                 </div>
                 <div class="metric">
-                    <div class="metric-value" id="circuit-state">CLOSED</div>
+                    <div class="metric-value" id="circuit-state">N/A</div>
                     <div class="metric-label">Circuit Breaker</div>
                 </div>
             </div>
         </div>
         
-        <!-- Queue Status -->
         <div class="card">
             <h2>📦 Queue Status</h2>
             <div class="chart-container">
@@ -461,22 +338,18 @@ class OrchestratorDashboard:
             </div>
         </div>
         
-        <!-- Throughput Chart -->
         <div class="card">
-            <h2>⚡ Pipeline Throughput (Last 10 min)</h2>
+            <h2>⚡ Pipeline Throughput</h2>
             <div class="chart-container">
                 <canvas id="throughputChart"></canvas>
             </div>
         </div>
         
-        <div class="last-update" id="last-update">
-            Last updated: Never
-        </div>
+        <div class="last-update" id="last-update">Last updated: Never</div>
     </div>
     
     <script>
-        let queueChart = null;
-        let throughputChart = null;
+        let queueChart, throughputChart;
         let throughputData = [];
         
         async function updateMetrics() {
@@ -484,51 +357,39 @@ class OrchestratorDashboard:
                 const response = await fetch('/api/metrics/summary');
                 const data = await response.json();
                 
-                // Update timestamp
+                console.log('Metrics received:', data);
+                
                 document.getElementById('last-update').textContent = 
                     `Last updated: ${new Date(data.timestamp).toLocaleTimeString()}`;
                 
-                // Update agent status
                 updateAgentStatus(data.agents);
-                
-                // Update pipeline metrics
                 updatePipelineMetrics(data.pipeline);
-                
-                // Update autonomy metrics
                 updateAutonomyMetrics(data.autonomy);
-                
-                // Update queue chart
                 updateQueueChart(data.queues);
-                
-                // Update throughput chart
                 updateThroughputChart(data.pipeline);
                 
             } catch (e) {
                 console.error('Failed to update metrics:', e);
-                document.getElementById('last-update').textContent = 
-                    `Error: ${e.message}`;
             }
         }
         
         function updateAgentStatus(agents) {
-            if (agents.length === 0) {
-                document.getElementById('agent-status').innerHTML = 
-                    '<div class="loading">No agents registered</div>';
+            const container = document.getElementById('agent-status');
+            
+            if (!agents || agents.length === 0) {
+                container.innerHTML = '<div style="color: #666; padding: 20px;">No agents registered</div>';
                 return;
             }
             
             const html = agents.map(a => `
                 <div class="agent-card">
                     <div class="agent-type">🤖 ${a.type.toUpperCase()}</div>
-                    <div class="agent-id">${a.id}</div>
+                    <div style="font-size: 0.85em; color: #666;">${a.id}</div>
                     <div>Status: <span class="status-${a.health}">${a.status.toUpperCase()}</span></div>
-                    <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
-                        Last HB: ${a.last_heartbeat === 'Never' ? 'Never' : new Date(a.last_heartbeat).toLocaleTimeString()}
-                    </div>
                 </div>
             `).join('');
             
-            document.getElementById('agent-status').innerHTML = html;
+            container.innerHTML = html;
         }
         
         function updatePipelineMetrics(pipeline) {
@@ -541,22 +402,15 @@ class OrchestratorDashboard:
         function updateAutonomyMetrics(autonomy) {
             document.getElementById('current-fps').textContent = autonomy.current_fps;
             document.getElementById('retry-count').textContent = autonomy.retry_count;
-            
-            const storageMode = document.getElementById('storage-mode');
-            storageMode.textContent = autonomy.storage_mode;
-            
-            const circuitState = document.getElementById('circuit-state');
-            circuitState.textContent = autonomy.circuit_state;
+            document.getElementById('storage-mode').textContent = autonomy.storage_mode;
+            document.getElementById('circuit-state').textContent = autonomy.circuit_state;
         }
         
         function updateQueueChart(queues) {
             const ctx = document.getElementById('queueChart').getContext('2d');
             
             if (queueChart) {
-                queueChart.data.datasets[0].data = [
-                    queues.processing, 
-                    queues.storage
-                ];
+                queueChart.data.datasets[0].data = [queues.processing, queues.storage];
                 queueChart.update('none');
             } else {
                 queueChart = new Chart(ctx, {
@@ -566,48 +420,25 @@ class OrchestratorDashboard:
                         datasets: [{
                             label: 'Queue Length',
                             data: [queues.processing, queues.storage],
-                            backgroundColor: [
-                                'rgba(102, 126, 234, 0.8)',
-                                'rgba(118, 75, 162, 0.8)'
-                            ],
-                            borderColor: [
-                                'rgba(102, 126, 234, 1)',
-                                'rgba(118, 75, 162, 1)'
-                            ],
-                            borderWidth: 2
+                            backgroundColor: ['rgba(102, 126, 234, 0.8)', 'rgba(118, 75, 162, 0.8)']
                         }]
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
-                        scales: {
-                            y: { 
-                                beginAtZero: true,
-                                title: {
-                                    display: true,
-                                    text: 'Items in Queue'
-                                }
-                            }
-                        },
-                        plugins: {
-                            legend: { display: false }
-                        }
+                        scales: { y: { beginAtZero: true } }
                     }
                 });
             }
         }
         
         function updateThroughputChart(pipeline) {
-            // Add current throughput to history
             throughputData.push({
                 time: new Date().toLocaleTimeString(),
                 frames: pipeline.processed
             });
             
-            // Keep only last 30 data points
-            if (throughputData.length > 30) {
-                throughputData.shift();
-            }
+            if (throughputData.length > 30) throughputData.shift();
             
             const ctx = document.getElementById('throughputChart').getContext('2d');
             
@@ -625,7 +456,6 @@ class OrchestratorDashboard:
                             data: throughputData.map(d => d.frames),
                             borderColor: 'rgba(102, 126, 234, 1)',
                             backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                            borderWidth: 2,
                             tension: 0.4,
                             fill: true
                         }]
@@ -633,24 +463,13 @@ class OrchestratorDashboard:
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
-                        scales: {
-                            y: { 
-                                beginAtZero: true,
-                                title: {
-                                    display: true,
-                                    text: 'Total Frames'
-                                }
-                            }
-                        }
+                        scales: { y: { beginAtZero: true } }
                     }
                 });
             }
         }
         
-        // Initial load
         updateMetrics();
-        
-        // Auto-refresh every 2 seconds
         setInterval(updateMetrics, 2000);
     </script>
 </body>

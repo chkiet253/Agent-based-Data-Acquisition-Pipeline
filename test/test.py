@@ -1,433 +1,348 @@
 """
-Test với camera Nhật Bản tìm được
-IP: 220.254.72.200
-Port: 80
-Path: /cgi-bin/camera
-
-READY TO RUN - Chạy ngay không cần sửa gì
+Snapshot Camera Stream Test
+Đặc biệt cho camera snapshot-based (không phải video stream liên tục)
 """
 import asyncio
 import httpx
-import cv2
+import requests
 import time
 from datetime import datetime
+from pathlib import Path
+import io
+from PIL import Image
+import base64
 
 
-# ========== CAMERA URL TÌM ĐƯỢC ==========
-CAMERA_URL = "http://220.254.72.200/cgi-bin/camera?resolution=640&quality=1"
-CAMERA_IP = "220.254.72.200"
-# ==========================================
-
-
-def test_camera_connection():
+class SnapshotCameraStreamer:
     """
-    Test 1: Kiểm tra có kết nối được camera không
+    Stream từ snapshot camera bằng cách request liên tục
+    Tốt hơn cho camera không hỗ trợ video stream
     """
-    print("="*60)
-    print("🔍 TEST 1: Camera Connection")
-    print("="*60)
-    print(f"Camera IP: {CAMERA_IP}")
-    print(f"Camera URL: {CAMERA_URL}")
-    print()
     
-    try:
-        print("⏳ Connecting to camera...")
-        cap = cv2.VideoCapture(CAMERA_URL)
+    def __init__(self):
+        self.base_urls = {
+            'orchestrator': 'http://localhost:8000',
+            'ingestion': 'http://localhost:8001',
+            'processing': 'http://localhost:8002',
+            'storage': 'http://localhost:8003'
+        }
         
-        if not cap.isOpened():
-            print("❌ Cannot open camera stream")
-            print("\nTrying alternative URLs...")
-            
-            # Try alternatives
-            alternatives = [
-                f"http://{CAMERA_IP}/cgi-bin/camera",
-                f"http://{CAMERA_IP}/image.jpg",
-                f"http://{CAMERA_IP}/snapshot.cgi",
-            ]
-            
-            for alt_url in alternatives:
-                print(f"\n   Trying: {alt_url}")
-                cap = cv2.VideoCapture(alt_url)
-                if cap.isOpened():
-                    print(f"   ✅ This URL works!")
-                    global CAMERA_URL
-                    CAMERA_URL = alt_url
-                    break
-                cap.release()
-            else:
-                return False
+        # Camera snapshot URL
+        self.camera_url = "http://220.254.72.200/cgi-bin/camera"
         
-        # Read test frames
-        print("\n📸 Reading test frames...")
-        success_count = 0
-        
-        for i in range(5):
-            ret, frame = cap.read()
-            
-            if ret and frame is not None:
-                success_count += 1
-                print(f"   Frame {i+1}/5: ✅ {frame.shape[1]}x{frame.shape[0]}")
-                
-                if i == 0:
-                    # Save first frame
-                    cv2.imwrite("camera_test_frame.jpg", frame)
-                    print(f"   💾 Saved: camera_test_frame.jpg")
-            else:
-                print(f"   Frame {i+1}/5: ❌ Failed")
-            
-            time.sleep(0.5)
-        
-        cap.release()
-        
-        print(f"\n📊 Result: {success_count}/5 frames successful")
-        
-        if success_count >= 3:
-            print("✅ Camera connection: GOOD")
-            return True
-        else:
-            print("⚠️  Camera connection: UNSTABLE")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Connection test failed: {e}")
-        return False
-
-
-async def test_pipeline_basic(duration_seconds=30):
-    """
-    Test 2: Test với pipeline (basic)
-    """
-    print("\n" + "="*60)
-    print("🚀 TEST 2: Pipeline Basic Test")
-    print("="*60)
-    print(f"Duration: {duration_seconds} seconds")
-    print(f"Camera: {CAMERA_URL}")
-    print()
+        # Request settings
+        self.request_timeout = 5
+        self.retry_delay = 1
+        self.max_retries = 3
     
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            
-            # Check services first
-            print("🔍 Checking services...")
-            services = {
-                "Orchestrator": "http://localhost:8000/health",
-                "Ingestion": "http://localhost:8001/health",
-                "Processing": "http://localhost:8002/health",
-                "Storage": "http://localhost:8003/health"
-            }
-            
-            all_ready = True
-            for name, url in services.items():
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code == 200:
-                        print(f"   ✅ {name}")
-                    else:
-                        print(f"   ❌ {name} (status: {resp.status_code})")
-                        all_ready = False
-                except Exception as e:
-                    print(f"   ❌ {name} (not reachable)")
-                    all_ready = False
-            
-            if not all_ready:
-                print("\n⚠️  Some services not ready!")
-                print("   Run: docker-compose up -d")
-                return False
-            
-            # Start ingestion
-            print("\n📥 Starting ingestion...")
-            
-            config = {
-                "source_id": "japan_camera_220_254_72_200",
-                "video_path": CAMERA_URL,
-                "fps": 3,  # Low FPS cho stability
-                "batch_size": 5,
-                "start_frame": 0,
-                "end_frame": duration_seconds * 3,  # 3 fps * duration
-                "adaptive_mode": True,
-                "min_fps": 1,
-                "max_fps": 5
-            }
-            
-            response = await client.post(
-                "http://localhost:8001/ingest/start",
-                json=config
+    def test_snapshot(self) -> bool:
+        """Test xem có lấy được snapshot không"""
+        print(f"🔍 Testing snapshot: {self.camera_url}")
+        
+        try:
+            response = requests.get(
+                self.camera_url,
+                timeout=self.request_timeout
             )
             
-            if response.status_code != 200:
-                print(f"❌ Failed to start ingestion")
-                print(f"   Status: {response.status_code}")
-                print(f"   Response: {response.text}")
+            if response.status_code == 200:
+                # Try to open as image
+                img = Image.open(io.BytesIO(response.content))
+                print(f"   ✅ Success: {img.size[0]}x{img.size[1]}")
+                return True
+            else:
+                print(f"   ❌ HTTP {response.status_code}")
                 return False
-            
-            job_data = response.json()
-            job_id = job_data['job_id']
-            
-            print(f"✅ Ingestion started: {job_id}")
-            print(f"\n📊 Monitoring for {duration_seconds} seconds...")
-            print("   (Updates every 3 seconds)\n")
-            
-            # Monitor
-            start_time = time.time()
-            last_frames = 0
-            
-            while time.time() - start_time < duration_seconds:
-                await asyncio.sleep(3)
                 
-                # Get status
-                ing_resp = await client.get(
-                    f"http://localhost:8001/ingest/{job_id}/status"
-                )
-                proc_resp = await client.get(
-                    "http://localhost:8002/process/status"
-                )
-                stor_resp = await client.get(
-                    "http://localhost:8003/storage/status"
-                )
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+            return False
+    
+    async def check_services(self) -> bool:
+        """Kiểm tra pipeline services"""
+        print("\n🔍 Checking services...")
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            all_ok = True
+            
+            for name, url in self.base_urls.items():
+                try:
+                    response = await client.get(f"{url}/health")
+                    if response.status_code == 200:
+                        print(f"   ✅ {name.capitalize()}")
+                    else:
+                        print(f"   ❌ {name.capitalize()}")
+                        all_ok = False
+                except:
+                    print(f"   ❌ {name.capitalize()}")
+                    all_ok = False
+            
+            return all_ok
+    
+    async def stream_snapshots(self, duration_minutes: int = None, target_fps: float = 1.0):
+        """
+        Stream snapshot liên tục vào pipeline
+        
+        Args:
+            duration_minutes: Thời gian chạy (phút), None = chạy mãi
+            target_fps: FPS mục tiêu (khuyến nghị 0.5-2 cho snapshot camera)
+        """
+        print(f"\n{'='*60}")
+        print("📸 SNAPSHOT CAMERA STREAMING")
+        print(f"{'='*60}")
+        print(f"Camera: {self.camera_url}")
+        if duration_minutes is None:
+            print(f"Duration: ♾️  CONTINUOUS (press Ctrl+C to stop)")
+        else:
+            print(f"Duration: {duration_minutes} minutes")
+        print(f"Target rate: {target_fps} snapshots/second")
+        print(f"Interval: {1/target_fps:.1f}s between snapshots")
+        print()
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 
-                if ing_resp.status_code == 200:
-                    elapsed = int(time.time() - start_time)
+                # Start monitoring job
+                print("📥 Starting snapshot collection job...")
+                
+                start_time = time.time()
+                frame_count = 0
+                success_count = 0
+                error_count = 0
+                
+                print(f"\n{'='*60}")
+                print("📊 LIVE MONITORING (Ctrl+C to stop)")
+                print(f"{'='*60}\n")
+                
+                while True:
+                    elapsed = time.time() - start_time
                     
-                    ing_data = ing_resp.json()
-                    proc_data = proc_resp.json() if proc_resp.status_code == 200 else {}
-                    stor_data = stor_resp.json() if stor_resp.status_code == 200 else {}
-                    
-                    frames = ing_data.get('frames_ingested', 0)
-                    fps_current = ing_data.get('current_fps', 0)
-                    status = ing_data.get('status', 'unknown')
-                    
-                    frames_rate = (frames - last_frames) / 3 if elapsed > 0 else 0
-                    last_frames = frames
-                    
-                    print(f"[{elapsed:02d}s] "
-                          f"📥 Ingested: {frames:3d} ({frames_rate:.1f} fps) | "
-                          f"⚙️  Processed: {proc_data.get('processed_frames', 0):3d} | "
-                          f"💾 Stored: {stor_data.get('frames_stored', 0):3d} | "
-                          f"📦 Queue: {proc_data.get('queue_length', 0):2d} | "
-                          f"Status: {status}")
-                    
-                    if status in ['completed', 'failed']:
+                    # Check duration (chỉ khi có duration_minutes)
+                    if duration_minutes is not None and elapsed > duration_minutes * 60:
+                        print(f"\n⏱️  Reached {duration_minutes} minutes")
                         break
-            
-            # Stop
-            print("\n⏹️  Stopping ingestion...")
-            await client.post(f"http://localhost:8001/ingest/{job_id}/stop")
-            
-            # Final stats
-            print("\n" + "="*60)
-            print("📊 FINAL RESULTS")
-            print("="*60)
-            
-            final_ing = await client.get(f"http://localhost:8001/ingest/{job_id}/status")
-            final_proc = await client.get("http://localhost:8002/process/status")
-            final_stor = await client.get("http://localhost:8003/storage/status")
-            
-            if final_ing.status_code == 200:
-                ing = final_ing.json()
-                proc = final_proc.json() if final_proc.status_code == 200 else {}
-                stor = final_stor.json() if final_stor.status_code == 200 else {}
+                    
+                    # Get snapshot
+                    snapshot_start = time.time()
+                    
+                    try:
+                        # Request snapshot
+                        response = requests.get(
+                            self.camera_url,
+                            timeout=self.request_timeout
+                        )
+                        
+                        if response.status_code == 200:
+                            # Convert to base64
+                            img_data = base64.b64encode(response.content).decode('utf-8')
+                            
+                            # Create frame data
+                            frame_data = {
+                                "frame_id": f"snapshot_{frame_count:06d}",
+                                "sequence_number": frame_count,
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "data": img_data,
+                                "metadata": {
+                                    "width": 640,
+                                    "height": 480,
+                                    "format": "jpeg",
+                                    "size_bytes": len(response.content)
+                                }
+                            }
+                            
+                            # Send to processing (batch of 1)
+                            batch = {
+                                "batch_id": f"snapshot_batch_{frame_count:06d}",
+                                "source_id": "snapshot_camera",
+                                "frames": [frame_data]
+                            }
+                            
+                            # Send to processing agent
+                            proc_response = await client.post(
+                                f"{self.base_urls['processing']}/process/batch",
+                                json=batch,
+                                timeout=10.0
+                            )
+                            
+                            if proc_response.status_code == 200:
+                                success_count += 1
+                                
+                                # Print update every 5 snapshots
+                                if frame_count % 5 == 0:
+                                    # Get current stats
+                                    proc_status = await client.get(
+                                        f"{self.base_urls['processing']}/process/status"
+                                    )
+                                    stor_status = await client.get(
+                                        f"{self.base_urls['storage']}/storage/status"
+                                    )
+                                    
+                                    proc_data = proc_status.json() if proc_status.status_code == 200 else {}
+                                    stor_data = stor_status.json() if stor_status.status_code == 200 else {}
+                                    
+                                    elapsed_min = int(elapsed // 60)
+                                    elapsed_sec = int(elapsed % 60)
+                                    
+                                    print(f"[{elapsed_min:02d}:{elapsed_sec:02d}] "
+                                          f"📸 Captured: {success_count:3d} | "
+                                          f"❌ Errors: {error_count:2d} | "
+                                          f"⚙️  Processed: {proc_data.get('processed_frames', 0):3d} | "
+                                          f"🔍 Detections: {proc_data.get('detection_count', 0):3d} | "
+                                          f"💾 Stored: {stor_data.get('frames_stored', 0):3d}")
+                            else:
+                                error_count += 1
+                                if error_count % 5 == 0:
+                                    print(f"   ⚠️  Processing errors: {error_count}")
+                        else:
+                            error_count += 1
+                            
+                    except Exception as e:
+                        error_count += 1
+                        if error_count % 10 == 0:
+                            print(f"   ⚠️  Snapshot errors: {error_count} ({str(e)[:50]})")
+                    
+                    frame_count += 1
+                    
+                    # Calculate sleep time to maintain target FPS
+                    snapshot_time = time.time() - snapshot_start
+                    target_interval = 1.0 / target_fps
+                    sleep_time = max(0, target_interval - snapshot_time)
+                    
+                    await asyncio.sleep(sleep_time)
                 
-                print(f"\n📥 Ingestion:")
-                print(f"   Total frames: {ing.get('frames_ingested', 0)}")
-                print(f"   Dropped frames: {ing.get('frames_dropped', 0)}")
-                print(f"   Final status: {ing.get('status', 'unknown')}")
+                # Final summary
+                total_time = time.time() - start_time
+                
+                print(f"\n{'='*60}")
+                print("📊 FINAL STATISTICS")
+                print(f"{'='*60}")
+                
+                # Get final stats
+                proc_resp = await client.get(f"{self.base_urls['processing']}/process/status")
+                stor_resp = await client.get(f"{self.base_urls['storage']}/storage/status")
+                
+                proc_data = proc_resp.json() if proc_resp.status_code == 200 else {}
+                stor_data = stor_resp.json() if stor_resp.status_code == 200 else {}
+                
+                print(f"\n⏱️  Total Time: {int(total_time // 60)}m {int(total_time % 60)}s")
+                print(f"\n📸 Snapshot Collection:")
+                print(f"   Total attempts: {frame_count}")
+                print(f"   Successful: {success_count}")
+                print(f"   Errors: {error_count}")
+                print(f"   Success rate: {(success_count/frame_count*100):.1f}%")
+                print(f"   Average rate: {success_count/total_time:.2f} snapshots/second")
                 
                 print(f"\n⚙️  Processing:")
-                print(f"   Processed frames: {proc.get('processed_frames', 0)}")
-                print(f"   Detections: {proc.get('detection_count', 0)}")
-                print(f"   Circuit breaker: {proc.get('circuit_breaker_state', 'N/A')}")
+                print(f"   Processed frames: {proc_data.get('processed_frames', 0)}")
+                print(f"   Total detections: {proc_data.get('detection_count', 0)}")
+                print(f"   Queue length: {proc_data.get('queue_length', 0)}")
                 
                 print(f"\n💾 Storage:")
-                print(f"   Stored frames: {stor.get('frames_stored', 0)}")
-                print(f"   Stored batches: {stor.get('batches_stored', 0)}")
-                print(f"   Storage mode: {stor.get('storage_mode', 'N/A')}")
+                print(f"   Stored frames: {stor_data.get('frames_stored', 0)}")
+                print(f"   Stored batches: {stor_data.get('batches_stored', 0)}")
+                print(f"   Storage mode: {stor_data.get('storage_mode', 'N/A')}")
                 
-                # Calculate stats
-                total_frames = ing.get('frames_ingested', 0)
-                if total_frames > 0:
-                    avg_fps = total_frames / duration_seconds
-                    success_rate = (proc.get('processed_frames', 0) / total_frames) * 100
-                    
-                    print(f"\n📈 Statistics:")
-                    print(f"   Average FPS: {avg_fps:.2f}")
-                    print(f"   Success rate: {success_rate:.1f}%")
-            
-            print("\n" + "="*60)
-            
+                print(f"\n{'='*60}")
+                
+                return success_count > 0
+                
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Stream stopped by user")
             return True
             
-    except Exception as e:
-        print(f"\n❌ Pipeline test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-async def test_with_privacy(duration_seconds=20):
-    """
-    Test 3: Test với privacy features
-    """
-    print("\n" + "="*60)
-    print("🔒 TEST 3: Privacy Features Test")
-    print("="*60)
-    print(f"Duration: {duration_seconds} seconds")
-    print()
-    
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            
-            # Add privacy zones
-            print("🔧 Configuring privacy zones...")
-            
-            zones = [
-                (100, 200, 400, 150, "License plates area"),
-                (500, 100, 200, 200, "Face privacy zone"),
-            ]
-            
-            for x, y, w, h, desc in zones:
-                resp = await client.post(
-                    "http://localhost:8002/process/privacy/zone",
-                    params={"x": x, "y": y, "width": w, "height": h}
-                )
-                
-                if resp.status_code == 200:
-                    print(f"   ✅ {desc}: ({x}, {y}) {w}x{h}")
-                else:
-                    print(f"   ⚠️  Failed to add zone: {desc}")
-            
-            # Get initial privacy stats
-            stats_resp = await client.get(
-                "http://localhost:8002/process/privacy/stats"
-            )
-            
-            if stats_resp.status_code == 200:
-                print("\n📊 Privacy stats (before):")
-                stats = stats_resp.json()
-                for key, value in stats.items():
-                    print(f"   {key}: {value}")
-            
-            # Start ingestion with privacy
-            print("\n📥 Starting privacy-enabled ingestion...")
-            
-            config = {
-                "source_id": "japan_camera_privacy",
-                "video_path": CAMERA_URL,
-                "fps": 2,
-                "batch_size": 5,
-                "end_frame": duration_seconds * 2,
-                "adaptive_mode": True
-            }
-            
-            response = await client.post(
-                "http://localhost:8001/ingest/start",
-                json=config
-            )
-            
-            if response.status_code != 200:
-                print("❌ Failed to start")
-                return False
-            
-            job_id = response.json()['job_id']
-            print(f"✅ Job started: {job_id}")
-            
-            # Monitor
-            print(f"\n📊 Monitoring...\n")
-            
-            for i in range(duration_seconds // 3):
-                await asyncio.sleep(3)
-                
-                # Get privacy stats
-                stats_resp = await client.get(
-                    "http://localhost:8002/process/privacy/stats"
-                )
-                
-                if stats_resp.status_code == 200:
-                    stats = stats_resp.json()
-                    
-                    print(f"[{i*3:02d}s] "
-                          f"🔒 Anonymizations: {stats.get('total_operations', 0)} | "
-                          f"👤 Faces: {stats.get('total_faces', 0)} | "
-                          f"🚗 Plates: {stats.get('total_plates', 0)} | "
-                          f"📍 Zones: {stats.get('total_zones', 0)}")
-            
-            # Stop
-            await client.post(f"http://localhost:8001/ingest/{job_id}/stop")
-            
-            print("\n✅ Privacy test completed")
-            
-            return True
-            
-    except Exception as e:
-        print(f"\n❌ Privacy test failed: {e}")
-        return False
+        except Exception as e:
+            print(f"\n❌ Stream failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
 
 async def main():
-    """
-    Main test runner
-    """
+    """Main function"""
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║         JAPAN CAMERA TEST                                ║
-║  Camera: 220.254.72.200                                  ║
-║  Location: Japan (Insecam #1010039)                      ║
+║         SNAPSHOT CAMERA STREAMER                         ║
+║  For cameras that only provide snapshots (not streams)   ║
 ╚══════════════════════════════════════════════════════════╝
     """)
     
-    results = {}
+    streamer = SnapshotCameraStreamer()
     
-    # Test 1: Connection
-    print("\n" + "🎬 Starting tests...\n")
-    results['connection'] = test_camera_connection()
+    # Test snapshot
+    print("\n" + "="*60)
+    print("TEST 1: Snapshot Availability")
+    print("="*60)
     
-    if not results['connection']:
-        print("\n❌ Camera connection failed. Cannot proceed.")
-        print("\nTroubleshooting:")
-        print("1. Camera may be offline")
-        print("2. IP may have changed")
-        print("3. Try another camera from Insecam")
+    if not streamer.test_snapshot():
+        print("\n❌ Cannot get snapshot from camera")
+        print("\nPossible reasons:")
+        print("1. Camera is offline")
+        print("2. Network connection issue")
+        print("3. Camera requires authentication")
+        print("\nFallback: Use local video file")
+        print("   Place video in: test_data/video_traffic.mp4")
+        print("   Run: python test/test_live_stream.py")
         return 1
     
-    # Wait a bit
-    print("\n⏳ Waiting 5 seconds before pipeline tests...")
-    await asyncio.sleep(5)
+    # Check services
+    print("\n" + "="*60)
+    print("TEST 2: Pipeline Services")
+    print("="*60)
     
-    # Test 2: Pipeline
-    results['pipeline'] = await test_pipeline_basic(duration_seconds=30)
+    if not await streamer.check_services():
+        print("\n❌ Services not ready")
+        print("   Run: docker-compose up -d")
+        return 1
     
-    # Test 3: Privacy
-    if results['pipeline']:
-        await asyncio.sleep(3)
-        results['privacy'] = await test_with_privacy(duration_seconds=20)
+    # Configure streaming
+    print("\n" + "="*60)
+    print("CONFIGURATION")
+    print("="*60)
+    
+    mode_input = input("Mode (1=Timed, 2=Continuous, default=1): ").strip()
+    
+    if mode_input == '2':
+        duration = None
+        print("✅ Selected: CONTINUOUS mode (Ctrl+C to stop)")
     else:
-        results['privacy'] = False
-        print("\n⚠️  Skipping privacy test (pipeline failed)")
+        duration_input = input("Duration (minutes, default=5): ").strip()
+        try:
+            duration = int(duration_input) if duration_input else 5
+            duration = max(1, min(duration, 60))
+        except:
+            duration = 5
+        print(f"✅ Selected: Timed mode ({duration} minutes)")
+    
+    fps_input = input("Snapshot rate (fps, default=1.0, recommend 0.5-2.0): ").strip()
+    
+    try:
+        fps = float(fps_input) if fps_input else 1.0
+        fps = max(0.1, min(fps, 5.0))
+    except:
+        fps = 1.0
+    
+    if duration is None:
+        print(f"\n✅ Will collect snapshots CONTINUOUSLY at {fps} fps")
+        print("   Press Ctrl+C anytime to stop")
+    else:
+        print(f"\n✅ Will collect snapshots for {duration} minute(s) at {fps} fps")
+    
+    # Start streaming
+    await asyncio.sleep(2)
+    success = await streamer.stream_snapshots(duration_minutes=duration, target_fps=fps)
     
     # Summary
     print("\n" + "="*60)
-    print("📊 TEST SUMMARY")
+    if success:
+        print("✅ STREAMING COMPLETED")
+        print("\n📊 View results:")
+        print("   Dashboard: http://localhost:8000/dashboard")
+        print("   Metrics: http://localhost:8000/api/metrics/summary")
+    else:
+        print("❌ STREAMING FAILED")
     print("="*60)
     
-    for test_name, passed in results.items():
-        status = "✅ PASS" if passed else "❌ FAIL"
-        print(f"{status}: {test_name}")
-    
-    total = len(results)
-    passed_count = sum(1 for v in results.values() if v)
-    
-    print(f"\n🎯 Results: {passed_count}/{total} tests passed")
-    
-    if passed_count == total:
-        print("\n🎉 ALL TESTS PASSED!")
-    else:
-        print(f"\n⚠️  {total - passed_count} test(s) failed")
-    
-    print("\n📊 View results:")
-    print("   Dashboard: http://localhost:8000/dashboard")
-    print("   Metrics API: http://localhost:8000/api/metrics/summary")
-    print("   Test frame: camera_test_frame.jpg")
-    
-    return 0 if passed_count == total else 1
+    return 0 if success else 1
 
 
 if __name__ == "__main__":
@@ -437,10 +352,8 @@ if __name__ == "__main__":
         exit_code = asyncio.run(main())
         sys.exit(exit_code)
     except KeyboardInterrupt:
-        print("\n\n⚠️  Tests interrupted by user")
-        sys.exit(1)
+        print("\n\n👋 Goodbye!")
+        sys.exit(0)
     except Exception as e:
-        print(f"\n\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"\n❌ Fatal error: {e}")
         sys.exit(1)
