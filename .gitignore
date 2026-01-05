@@ -21,3 +21,4 @@ venv/
 # IDE
 .vscode/
 .idea/
+.test_data/
