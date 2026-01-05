@@ -1,6 +1,5 @@
 """
-FIXED Dashboard - Sửa lỗi "No agents registered"
-Copy file này vào: agents/orchestrator/dashboard.py
+CRITICAL FIX: Dashboard với agent detection đúng
 """
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -12,15 +11,11 @@ logger = logging.getLogger("orchestrator.dashboard")
 
 
 class OrchestratorDashboard:
-    """Fixed dashboard with proper agent detection"""
-    
     def __init__(self, orchestrator):
         self.orchestrator = orchestrator
         self.http_client = httpx.AsyncClient(timeout=10.0)
     
     def setup_routes(self, app: FastAPI):
-        """Add dashboard routes"""
-        
         @app.get("/dashboard", response_class=HTMLResponse)
         async def dashboard():
             return self._get_dashboard_html()
@@ -30,28 +25,53 @@ class OrchestratorDashboard:
             return await self.collect_all_metrics()
     
     async def collect_all_metrics(self):
-        """Collect metrics - FIXED VERSION"""
+        """FIXED: Better agent detection"""
         try:
             # Get agents from database
             agents_status = await self._get_agents_status()
             
-            logger.info(f"Found {len(agents_status)} agents in database")
+            logger.info(f"📊 Found {len(agents_status)} total agent records")
             
-            # Get latest agents only (group by type, take latest)
-            latest_agents = {}
+            # ✅ FIX: Filter by recent heartbeat (last 2 minutes)
+            now = datetime.utcnow()
+            active_agents = []
+            
             for agent in agents_status:
+                if agent.get('last_heartbeat'):
+                    try:
+                        hb_time = datetime.fromisoformat(agent['last_heartbeat'])
+                        age_seconds = (now - hb_time).total_seconds()
+                        
+                        # Consider active if heartbeat within 2 minutes
+                        if age_seconds < 120:
+                            active_agents.append(agent)
+                            logger.info(f"  ✅ Active: {agent['type']} (heartbeat {age_seconds:.0f}s ago)")
+                        else:
+                            logger.warning(f"  ⏰ Stale: {agent['type']} (heartbeat {age_seconds:.0f}s ago)")
+                    except Exception as e:
+                        logger.error(f"  ❌ Parse error for {agent.get('type')}: {e}")
+            
+            # ✅ FIX: Deduplicate by type, keep most recent
+            latest_agents = {}
+            for agent in active_agents:
                 agent_type = agent['type']
                 if agent_type not in latest_agents:
                     latest_agents[agent_type] = agent
                 else:
-                    # Compare timestamps, keep latest
                     current = latest_agents[agent_type]
-                    if agent.get('last_heartbeat', '') > current.get('last_heartbeat', ''):
+                    if agent['last_heartbeat'] > current['last_heartbeat']:
                         latest_agents[agent_type] = agent
             
             agents_status = list(latest_agents.values())
             
-            logger.info(f"Using {len(agents_status)} latest agents")
+            logger.info(f"📊 Using {len(agents_status)} active agents")
+            
+            if len(agents_status) == 0:
+                logger.error("❌ NO ACTIVE AGENTS FOUND!")
+                logger.error("   This means either:")
+                logger.error("   1. Agents are not sending heartbeats")
+                logger.error("   2. Database has stale data")
+                logger.error("   3. Heartbeat threshold (120s) too strict")
             
             # Query metrics from agents
             ingestion_metrics = await self._query_agent_metrics("http://ingestion:8001/ingest/status")
@@ -88,15 +108,7 @@ class OrchestratorDashboard:
                 'autonomy': autonomy_metrics
             }
             
-            # Store in history
-            if not hasattr(self, 'metrics_history'):
-                self.metrics_history = []
-            
-            self.metrics_history.append(result)
-            if len(self.metrics_history) > 100:
-                self.metrics_history.pop(0)
-            
-            logger.info(f"Metrics collected: {len(agents_status)} agents, {pipeline_metrics['processed']} processed")
+            logger.info(f"✅ Metrics: {len(agents_status)} agents, {pipeline_metrics['processed']} processed")
             
             return result
             
@@ -105,7 +117,7 @@ class OrchestratorDashboard:
             return self._get_empty_metrics()
     
     async def _get_agents_status(self):
-        """Get agents from database - FIXED"""
+        """Get ALL agents from database (no filtering yet)"""
         import aiosqlite
         
         agents = []
@@ -115,7 +127,7 @@ class OrchestratorDashboard:
                 cursor = await db.execute("""
                     SELECT agent_id, agent_type, status, last_heartbeat, endpoint
                     FROM agents
-                    ORDER BY agent_type, registered_at DESC
+                    ORDER BY registered_at DESC
                 """)
                 
                 rows = await cursor.fetchall()
@@ -179,7 +191,7 @@ class OrchestratorDashboard:
         }
     
     def _get_dashboard_html(self):
-        """Dashboard HTML - SAME AS BEFORE"""
+        """Dashboard HTML (giữ nguyên)"""
         return """
 <!DOCTYPE html>
 <html>
@@ -278,6 +290,17 @@ class OrchestratorDashboard:
             margin-top: 20px;
             font-size: 0.9em;
         }
+        
+        /* Debug info */
+        .debug-info {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            padding: 10px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.85em;
+            margin-top: 20px;
+        }
     </style>
 </head>
 <body>
@@ -346,6 +369,11 @@ class OrchestratorDashboard:
         </div>
         
         <div class="last-update" id="last-update">Last updated: Never</div>
+        
+        <!-- Debug info -->
+        <div class="debug-info" id="debug-info">
+            Debug: Waiting for data...
+        </div>
     </div>
     
     <script>
@@ -359,6 +387,12 @@ class OrchestratorDashboard:
                 
                 console.log('Metrics received:', data);
                 
+                // Update debug info
+                document.getElementById('debug-info').textContent = 
+                    `Debug: ${data.agents.length} agents, ` +
+                    `${data.pipeline.processed} processed, ` +
+                    `Last update: ${new Date(data.timestamp).toLocaleTimeString()}`;
+                
                 document.getElementById('last-update').textContent = 
                     `Last updated: ${new Date(data.timestamp).toLocaleTimeString()}`;
                 
@@ -370,6 +404,7 @@ class OrchestratorDashboard:
                 
             } catch (e) {
                 console.error('Failed to update metrics:', e);
+                document.getElementById('debug-info').textContent = `Error: ${e.message}`;
             }
         }
         
@@ -377,7 +412,7 @@ class OrchestratorDashboard:
             const container = document.getElementById('agent-status');
             
             if (!agents || agents.length === 0) {
-                container.innerHTML = '<div style="color: #666; padding: 20px;">No agents registered</div>';
+                container.innerHTML = '<div style="color: #666; padding: 20px;">⚠️ No active agents (check heartbeats)</div>';
                 return;
             }
             
@@ -386,6 +421,7 @@ class OrchestratorDashboard:
                     <div class="agent-type">🤖 ${a.type.toUpperCase()}</div>
                     <div style="font-size: 0.85em; color: #666;">${a.id}</div>
                     <div>Status: <span class="status-${a.health}">${a.status.toUpperCase()}</span></div>
+                    <div style="font-size: 0.8em; color: #999;">HB: ${a.last_heartbeat}</div>
                 </div>
             `).join('');
             

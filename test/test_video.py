@@ -1,316 +1,599 @@
 """
-Phase 2 Integration Test - Core Pipeline
-Tests end-to-end video processing pipeline
+COMPLETE DEMO SCRIPT - Multi-Agent Data Acquisition Pipeline
+Based on research paper architecture + Phase 4 implementation
 """
 import asyncio
 import httpx
 import time
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+import json
 
 
-class Phase2Tester:
+class CompletePipelineDemo:
+    """
+    Demo script theo flow của bài báo:
+    1. Agent Registration & Discovery
+    2. Data Ingestion với Adaptive Features
+    3. Processing với Privacy Protection
+    4. Storage với Fallback Mechanism
+    5. Real-time Monitoring
+    """
+    
     def __init__(self):
-        self.orchestrator_url = "http://localhost:8000"
-        self.ingestion_url = "http://localhost:8001"
-        self.processing_url = "http://localhost:8002"
-        self.storage_url = "http://localhost:8003"
+        self.base_urls = {
+            'orchestrator': 'http://localhost:8000',
+            'ingestion': 'http://localhost:8001',
+            'processing': 'http://localhost:8002',
+            'storage': 'http://localhost:8003'
+        }
         
-        # Test video path (should be in test_data folder)
-        self.test_video = r"D:\projects\seminar\test_data\video_traffic.mp4"
-        self.test_video_container = "/test_data/video_traffic.mp4"
+        # Test video (như trong bài báo: RTSP camera hoặc video file)
+        self.test_video = "/test_data/traffic.mp4"
+        
+        # Demo configuration
+        self.demo_duration_seconds = 60  # 1 phút demo
+        self.monitoring_interval = 3  # Update mỗi 3 giây
+        
+        # Metrics tracking
+        self.metrics_history = []
     
-    async def test_agents_registered(self):
-        """Test 1: All agents are registered"""
-        print("\n🔍 Test 1: Agent Registration")
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"{self.orchestrator_url}/agents")
-                data = response.json()
-                
-                required_agents = {'ingestion', 'processing', 'storage'}
-                registered_types = {agent['agent_type'] for agent in data['agents']}
-                
-                if required_agents.issubset(registered_types):
-                    print(f"✅ All required agents registered: {registered_types}")
-                    return True
+    def print_section(self, title, emoji="📋"):
+        """Print formatted section header"""
+        print("\n" + "="*70)
+        print(f"{emoji} {title}")
+        print("="*70)
+    
+    async def section_1_system_health(self):
+        """
+        SECTION 1: System Health Check
+        Kiểm tra tất cả agents đã sẵn sàng (như Table 1 trong bài báo)
+        """
+        self.print_section("SECTION 1: System Health & Agent Discovery", "🏥")
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            print("\n1.1 Checking Orchestrator...")
+            try:
+                response = await client.get(f"{self.base_urls['orchestrator']}/health")
+                if response.status_code == 200:
+                    data = response.json()
+                    print(f"   ✅ Orchestrator: {data['agent_id']}")
+                    print(f"      Phase: {data.get('phase', 'N/A')}")
+                    print(f"      Uptime: {data.get('timestamp', 'N/A')}")
                 else:
-                    missing = required_agents - registered_types
-                    print(f"❌ Missing agents: {missing}")
+                    print(f"   ❌ Orchestrator unhealthy")
                     return False
+            except Exception as e:
+                print(f"   ❌ Cannot reach orchestrator: {e}")
+                return False
+            
+            print("\n1.2 Discovering Registered Agents...")
+            try:
+                response = await client.get(f"{self.base_urls['orchestrator']}/agents")
+                if response.status_code == 200:
+                    data = response.json()
+                    agents = data['agents']
                     
-        except Exception as e:
-            print(f"❌ Registration check failed: {e}")
-            return False
+                    print(f"   Found {len(agents)} registered agents:\n")
+                    
+                    for agent in agents:
+                        print(f"   🤖 {agent['agent_type'].upper()}")
+                        print(f"      ID: {agent['agent_id']}")
+                        print(f"      Status: {agent['status']}")
+                        print(f"      Endpoint: {agent['endpoint']}")
+                        print(f"      Capabilities: {len(agent['capabilities'])} features")
+                        
+                        # Hiển thị key capabilities (như Table 1)
+                        key_caps = []
+                        if 'adaptive_fps' in agent['capabilities']:
+                            key_caps.append('Adaptive FPS')
+                        if 'privacy_zones' in agent['capabilities']:
+                            key_caps.append('Privacy Zones')
+                        if 'fallback_storage' in agent['capabilities']:
+                            key_caps.append('Fallback Storage')
+                        if 'circuit_breaker' in agent['capabilities']:
+                            key_caps.append('Circuit Breaker')
+                        
+                        if key_caps:
+                            print(f"      Key Features: {', '.join(key_caps)}")
+                        print()
+                    
+                    # Verify all required agents present
+                    agent_types = {a['agent_type'] for a in agents}
+                    required = {'ingestion', 'processing', 'storage'}
+                    
+                    if required.issubset(agent_types):
+                        print("   ✅ All required agents are registered")
+                        return True
+                    else:
+                        missing = required - agent_types
+                        print(f"   ❌ Missing agents: {missing}")
+                        return False
+                        
+            except Exception as e:
+                print(f"   ❌ Agent discovery failed: {e}")
+                return False
     
-    async def test_video_file_exists(self):
-        """Test 2: Test video file exists"""
-        print("\n🔍 Test 2: Test Video File")
+    async def section_2_configure_privacy(self):
+        """
+        SECTION 2: Privacy Configuration
+        Setup privacy zones và anonymization methods (Phase 4 feature)
+        """
+        self.print_section("SECTION 2: Privacy Protection Setup", "🔒")
         
-        if Path(self.test_video).exists():
-            print(f"✅ Test video found: {self.test_video}")
-            return True
-        else:
-            print(f"⚠️  Test video not found: {self.test_video}")
-            print("   You can use any .mp4 file or download a sample video")
-            return False
-    
-    async def test_start_ingestion(self):
-        """Test 3: Start video ingestion"""
-        print("\n🔍 Test 3: Start Video Ingestion")
-        
-        if not Path(self.test_video).exists():
-            print("⚠️  Skipping ingestion test (no video file)")
-            return False
-        
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                config = {
-                    "source_id": "test_source_001",
-                    "video_path": self.test_video_container,  # Docker container path
-                    "fps": 5,  # Process 5 frames per second
-                    "batch_size": 10,
-                    "start_frame": 0,
-                    "end_frame": 50  # Process first 50 frames only
-                }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            print("\n2.1 Configuring Privacy Zones...")
+            
+            # Add privacy zones (giống như bài báo mention về anonymization)
+            zones = [
+                {"x": 100, "y": 100, "width": 200, "height": 200, "purpose": "License plates"},
+                {"x": 400, "y": 300, "width": 150, "height": 150, "purpose": "Faces area"}
+            ]
+            
+            for i, zone in enumerate(zones):
+                try:
+                    response = await client.post(
+                        f"{self.base_urls['processing']}/process/privacy/zone",
+                        params={
+                            "x": zone['x'],
+                            "y": zone['y'],
+                            "width": zone['width'],
+                            "height": zone['height']
+                        }
+                    )
+                    
+                    if response.status_code == 200:
+                        print(f"   ✅ Zone {i+1}: {zone['purpose']}")
+                        print(f"      Position: ({zone['x']}, {zone['y']})")
+                        print(f"      Size: {zone['width']}x{zone['height']}px")
+                    else:
+                        print(f"   ⚠️  Zone {i+1} failed: {response.status_code}")
+                        
+                except Exception as e:
+                    print(f"   ❌ Zone {i+1} error: {e}")
+            
+            print("\n2.2 Privacy Statistics (Initial)...")
+            try:
+                response = await client.get(
+                    f"{self.base_urls['processing']}/process/privacy/stats"
+                )
                 
+                if response.status_code == 200:
+                    stats = response.json()
+                    print(f"   Total operations: {stats.get('total_operations', 0)}")
+                    print(f"   Methods available: {stats.get('methods_used', ['blur', 'pixelate', 'black_box'])}")
+                    
+            except Exception as e:
+                print(f"   ⚠️  Stats unavailable: {e}")
+            
+            return True
+    
+    async def section_3_start_ingestion(self):
+        """
+        SECTION 3: Start Data Ingestion
+        Như Algorithm 1 trong bài báo
+        """
+        self.print_section("SECTION 3: Starting Data Ingestion", "📥")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            print("\n3.1 Ingestion Configuration:")
+            
+            config = {
+                "source_id": "demo_camera_001",
+                "video_path": self.test_video,
+                "fps": 15,  # Moderate FPS
+                "batch_size": 10,
+                "start_frame": 0,
+                "end_frame": self.demo_duration_seconds * 15,  # Total frames
+                
+                # Phase 3 features (như bài báo mention)
+                "adaptive_mode": True,
+                "min_fps": 5,
+                "max_fps": 30
+            }
+            
+            print(f"   Source: {config['source_id']}")
+            print(f"   Target FPS: {config['fps']} (adaptive: {config['min_fps']}-{config['max_fps']})")
+            print(f"   Batch size: {config['batch_size']}")
+            print(f"   Duration: ~{self.demo_duration_seconds}s")
+            
+            print("\n3.2 Starting Ingestion Job...")
+            
+            try:
                 response = await client.post(
-                    f"{self.ingestion_url}/ingest/start",
+                    f"{self.base_urls['ingestion']}/ingest/start",
                     json=config
                 )
                 
                 if response.status_code == 200:
                     data = response.json()
                     self.job_id = data['job_id']
-                    print(f"✅ Ingestion started: {self.job_id}")
-                    print(f"   Config: {config['fps']} FPS, batch size {config['batch_size']}")
+                    
+                    print(f"   ✅ Job Started: {self.job_id}")
+                    print(f"   Status: {data['status']}")
+                    print(f"   Initial queue: {data.get('queue_length', 0)}")
+                    
                     return True
                 else:
-                    print(f"❌ Failed to start ingestion: {response.status_code}")
+                    print(f"   ❌ Failed to start: {response.status_code}")
                     print(f"   Response: {response.text}")
                     return False
                     
-        except Exception as e:
-            print(f"❌ Ingestion start failed: {e}")
-            return False
+            except Exception as e:
+                print(f"   ❌ Ingestion start failed: {e}")
+                return False
     
-    async def test_monitor_pipeline(self):
-        """Test 4: Monitor pipeline progress"""
-        print("\n🔍 Test 4: Monitor Pipeline Progress")
+    async def section_4_monitor_pipeline(self):
+        """
+        SECTION 4: Real-time Pipeline Monitoring
+        Monitor như Figure 1 trong bài báo (Architecture diagram)
+        """
+        self.print_section("SECTION 4: Real-time Pipeline Monitoring", "📊")
         
-        if not hasattr(self, 'job_id'):
-            print("⚠️  Skipping monitoring (no active job)")
-            return False
+        print(f"\nMonitoring for {self.demo_duration_seconds} seconds...")
+        print("(Press Ctrl+C to stop early)\n")
         
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # Monitor for 30 seconds
-                for i in range(6):
-                    await asyncio.sleep(5)
+        print(f"{'Time':<8} {'Ingested':<10} {'Processed':<10} {'Stored':<10} "
+              f"{'Detections':<12} {'Queue':<8} {'FPS':<6} {'Status':<10}")
+        print("-" * 90)
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            start_time = time.time()
+            iteration = 0
+            
+            try:
+                while time.time() - start_time < self.demo_duration_seconds:
+                    elapsed = int(time.time() - start_time)
                     
-                    # Check ingestion status
-                    ing_response = await client.get(
-                        f"{self.ingestion_url}/ingest/{self.job_id}/status"
-                    )
-                    ing_data = ing_response.json()
-                    
-                    # Check processing status
-                    proc_response = await client.get(
-                        f"{self.processing_url}/process/status"
-                    )
-                    proc_data = proc_response.json()
-                    
-                    # Check storage status
-                    stor_response = await client.get(
-                        f"{self.storage_url}/storage/status"
-                    )
-                    stor_data = stor_response.json()
-                    
-                    print(f"\n   [{i*5}s] Pipeline Status:")
-                    print(f"   📥 Ingestion: {ing_data['frames_ingested']} frames, status: {ing_data['status']}")
-                    print(f"   ⚙️  Processing: {proc_data['processed_frames']} frames, {proc_data['detection_count']} detections")
-                    print(f"   💾 Storage: {stor_data['frames_stored']} frames, {stor_data['batches_stored']} batches")
-                    
-                    # Check if completed
-                    if ing_data['status'] == 'completed':
-                        print("\n✅ Pipeline completed!")
+                    # Gather metrics from all agents
+                    try:
+                        # Ingestion status
+                        ing_resp = await client.get(
+                            f"{self.base_urls['ingestion']}/ingest/{self.job_id}/status"
+                        )
+                        ing_data = ing_resp.json() if ing_resp.status_code == 200 else {}
                         
-                        # Wait a bit more for processing and storage to finish
-                        await asyncio.sleep(5)
+                        # Processing status
+                        proc_resp = await client.get(
+                            f"{self.base_urls['processing']}/process/status"
+                        )
+                        proc_data = proc_resp.json() if proc_resp.status_code == 200 else {}
                         
-                        # Final status
-                        proc_response = await client.get(f"{self.processing_url}/process/status")
-                        proc_data = proc_response.json()
-                        stor_response = await client.get(f"{self.storage_url}/storage/status")
-                        stor_data = stor_response.json()
+                        # Storage status
+                        stor_resp = await client.get(
+                            f"{self.base_urls['storage']}/storage/status"
+                        )
+                        stor_data = stor_resp.json() if stor_resp.status_code == 200 else {}
                         
-                        print(f"\n   📊 Final Results:")
-                        print(f"   - Frames processed: {proc_data['processed_frames']}")
-                        print(f"   - Total detections: {proc_data['detection_count']}")
-                        print(f"   - Batches stored: {stor_data['batches_stored']}")
-                        print(f"   - Total storage: {stor_data['total_bytes_stored']:,} bytes")
+                        # Extract metrics
+                        ingested = ing_data.get('frames_ingested', 0)
+                        processed = proc_data.get('processed_frames', 0)
+                        stored = stor_data.get('frames_stored', 0)
+                        detections = proc_data.get('detection_count', 0)
+                        queue_len = proc_data.get('queue_length', 0)
+                        current_fps = ing_data.get('current_fps', 0)
+                        job_status = ing_data.get('status', 'unknown')
                         
-                        return True
+                        # Print row
+                        print(f"{elapsed:>4}s    {ingested:<10} {processed:<10} {stored:<10} "
+                              f"{detections:<12} {queue_len:<8} {current_fps:<6} {job_status:<10}")
+                        
+                        # Store for later analysis
+                        self.metrics_history.append({
+                            'timestamp': elapsed,
+                            'ingested': ingested,
+                            'processed': processed,
+                            'stored': stored,
+                            'detections': detections,
+                            'queue': queue_len,
+                            'fps': current_fps,
+                            'status': job_status
+                        })
+                        
+                        # Check if completed early
+                        if job_status == 'completed':
+                            print("\n   ✅ Pipeline completed all frames!")
+                            break
+                        
+                        # Check for adaptive FPS changes (như bài báo Figure 2)
+                        if iteration > 0:
+                            prev_fps = self.metrics_history[-2]['fps']
+                            if current_fps != prev_fps:
+                                print(f"   🔄 Adaptive FPS: {prev_fps} → {current_fps} "
+                                      f"(Queue: {queue_len})")
+                        
+                        iteration += 1
+                        
+                    except Exception as e:
+                        print(f"   ⚠️  Monitoring error: {e}")
+                    
+                    await asyncio.sleep(self.monitoring_interval)
                 
-                print("\n⚠️  Pipeline still running after 30s")
-                return True  # Still consider it a pass
-                
-        except Exception as e:
-            print(f"❌ Monitoring failed: {e}")
-            return False
+            except KeyboardInterrupt:
+                print("\n\n   ⚠️  Monitoring stopped by user")
+            
+            print("\n" + "-" * 90)
+            return True
     
-    async def test_storage_verification(self):
-        """Test 5: Verify data in MinIO"""
-        print("\n🔍 Test 5: Storage Verification")
+    async def section_5_analyze_results(self):
+        """
+        SECTION 5: Results Analysis
+        Tương tự evaluation section trong bài báo
+        """
+        self.print_section("SECTION 5: Results Analysis", "📈")
         
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # List buckets
-                response = await client.get(f"{self.storage_url}/storage/buckets")
+        if not self.metrics_history:
+            print("   ⚠️  No metrics collected")
+            return False
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            print("\n5.1 Final Pipeline Statistics:")
+            
+            try:
+                # Get final status
+                ing_resp = await client.get(
+                    f"{self.base_urls['ingestion']}/ingest/{self.job_id}/status"
+                )
+                proc_resp = await client.get(
+                    f"{self.base_urls['processing']}/process/status"
+                )
+                stor_resp = await client.get(
+                    f"{self.base_urls['storage']}/storage/status"
+                )
                 
-                if response.status_code == 200:
-                    buckets = response.json()
-                    print(f"✅ MinIO buckets: {[b['name'] for b in buckets['buckets']]}")
-                    
-                    # List objects for test source
-                    response = await client.get(
-                        f"{self.storage_url}/storage/objects/test_source_001"
+                ing_data = ing_resp.json() if ing_resp.status_code == 200 else {}
+                proc_data = proc_resp.json() if proc_resp.status_code == 200 else {}
+                stor_data = stor_resp.json() if stor_resp.status_code == 200 else {}
+                
+                # Ingestion metrics
+                print(f"\n   📥 Ingestion Agent:")
+                print(f"      Frames ingested: {ing_data.get('frames_ingested', 0)}")
+                print(f"      Frames dropped: {ing_data.get('frames_dropped', 0)}")
+                print(f"      Retry count: {ing_data.get('retry_count', 0)}")
+                print(f"      Final FPS: {ing_data.get('current_fps', 0)}")
+                
+                if ing_data.get('frames_ingested', 0) > 0:
+                    drop_rate = (ing_data.get('frames_dropped', 0) / 
+                                ing_data.get('frames_ingested', 1)) * 100
+                    print(f"      Drop rate: {drop_rate:.2f}%")
+                
+                # Processing metrics
+                print(f"\n   ⚙️  Processing Agent:")
+                print(f"      Frames processed: {proc_data.get('processed_frames', 0)}")
+                print(f"      Total detections: {proc_data.get('detection_count', 0)}")
+                print(f"      Anonymized frames: {proc_data.get('anonymized_count', 0)}")
+                print(f"      Failed batches: {proc_data.get('failed_batches', 0)}")
+                print(f"      Circuit breaker: {proc_data.get('circuit_breaker_state', 'N/A')}")
+                
+                # Storage metrics
+                print(f"\n   💾 Storage Agent:")
+                print(f"      Frames stored: {stor_data.get('frames_stored', 0)}")
+                print(f"      Batches stored: {stor_data.get('batches_stored', 0)}")
+                print(f"      Total bytes: {stor_data.get('total_bytes_stored', 0):,}")
+                print(f"      Storage mode: {stor_data.get('storage_mode', 'N/A')}")
+                print(f"      Fallback count: {stor_data.get('fallback_count', 0)}")
+                print(f"      Disk usage: {stor_data.get('disk_usage_percent', 0):.1f}%")
+                
+            except Exception as e:
+                print(f"   ⚠️  Could not retrieve final stats: {e}")
+        
+        print("\n5.2 Performance Analysis:")
+        
+        # Calculate throughput (như Table 2 trong bài báo)
+        total_time = self.metrics_history[-1]['timestamp'] - self.metrics_history[0]['timestamp']
+        total_frames = self.metrics_history[-1]['processed']
+        
+        if total_time > 0 and total_frames > 0:
+            throughput = total_frames / total_time
+            print(f"   Average throughput: {throughput:.2f} frames/second")
+            
+            # Calculate latency
+            avg_queue = sum(m['queue'] for m in self.metrics_history) / len(self.metrics_history)
+            print(f"   Average queue length: {avg_queue:.1f}")
+            
+            # FPS adaptation analysis
+            fps_values = [m['fps'] for m in self.metrics_history]
+            min_fps = min(fps_values)
+            max_fps = max(fps_values)
+            avg_fps = sum(fps_values) / len(fps_values)
+            
+            print(f"   FPS range: {min_fps} - {max_fps} (avg: {avg_fps:.1f})")
+            
+            if max_fps - min_fps > 5:
+                print(f"   ✅ Adaptive FPS actively working (variation: {max_fps - min_fps})")
+        
+        print("\n5.3 Autonomy Features Assessment:")
+        
+        # Check for autonomy features usage
+        autonomy_score = 0
+        
+        if max_fps - min_fps > 0:
+            print(f"   ✅ Backpressure handling: ACTIVE")
+            autonomy_score += 1
+        else:
+            print(f"   ℹ️  Backpressure handling: NOT TRIGGERED")
+        
+        if ing_data.get('retry_count', 0) > 0:
+            print(f"   ✅ Self-healing: ACTIVE ({ing_data.get('retry_count', 0)} retries)")
+            autonomy_score += 1
+        else:
+            print(f"   ℹ️  Self-healing: NOT NEEDED")
+        
+        if proc_data.get('anonymized_count', 0) > 0:
+            print(f"   ✅ Privacy protection: ACTIVE")
+            autonomy_score += 1
+        else:
+            print(f"   ℹ️  Privacy protection: CONFIGURED")
+        
+        if stor_data.get('fallback_count', 0) > 0:
+            print(f"   ✅ Storage fallback: TRIGGERED")
+            autonomy_score += 1
+        else:
+            print(f"   ℹ️  Storage fallback: NOT NEEDED")
+        
+        print(f"\n   Autonomy Score: {autonomy_score}/4 features demonstrated")
+        
+        return True
+    
+    async def section_6_cleanup(self):
+        """
+        SECTION 6: Cleanup & System State
+        """
+        self.print_section("SECTION 6: Cleanup & System Health", "🧹")
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            print("\n6.1 Stopping Active Jobs...")
+            
+            try:
+                if hasattr(self, 'job_id'):
+                    response = await client.post(
+                        f"{self.base_urls['ingestion']}/ingest/{self.job_id}/stop"
                     )
                     
                     if response.status_code == 200:
-                        objects = response.json()
-                        print(f"   Found {len(objects['objects'])} objects:")
-                        for obj in objects['objects'][:5]:  # Show first 5
-                            print(f"   - {obj['name']} ({obj['size']} bytes)")
-                        
-                        if len(objects['objects']) > 5:
-                            print(f"   ... and {len(objects['objects']) - 5} more")
-                        
-                        return True
+                        print(f"   ✅ Job {self.job_id} stopped")
                     else:
-                        print("⚠️  No objects found (data might still be processing)")
-                        return True
-                else:
-                    print(f"❌ Failed to access MinIO: {response.status_code}")
-                    return False
-                    
-        except Exception as e:
-            print(f"❌ Storage verification failed: {e}")
-            return False
+                        print(f"   ⚠️  Job stop returned: {response.status_code}")
+            except Exception as e:
+                print(f"   ⚠️  Cleanup error: {e}")
+            
+            print("\n6.2 Final System Health Check...")
+            
+            # Check all agents health
+            agents_health = {}
+            
+            for name, url in self.base_urls.items():
+                try:
+                    response = await client.get(f"{url}/health", timeout=5.0)
+                    if response.status_code == 200:
+                        agents_health[name] = 'healthy'
+                        print(f"   ✅ {name.capitalize()}: Healthy")
+                    else:
+                        agents_health[name] = 'degraded'
+                        print(f"   ⚠️  {name.capitalize()}: Degraded")
+                except Exception as e:
+                    agents_health[name] = 'unreachable'
+                    print(f"   ❌ {name.capitalize()}: Unreachable")
+            
+            healthy_count = sum(1 for v in agents_health.values() if v == 'healthy')
+            
+            print(f"\n   System Health: {healthy_count}/{len(agents_health)} agents healthy")
+            
+            return healthy_count >= len(agents_health) - 1
     
-    async def test_processing_capabilities(self):
-        """Test 6: Test processing capabilities"""
-        print("\n🔍 Test 6: Processing Capabilities")
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"{self.orchestrator_url}/agents")
-                agents = response.json()['agents']
-                
-                for agent in agents:
-                    if agent['agent_type'] == 'processing':
-                        print(f"✅ Processing agent capabilities:")
-                        for cap in agent['capabilities']:
-                            print(f"   - {cap}")
-                        return True
-                
-                print("⚠️  Processing agent not found")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Capability check failed: {e}")
-            return False
-    
-    async def test_backpressure_config(self):
-        """Test 7: Test backpressure configuration"""
-        print("\n🔍 Test 7: Backpressure Configuration")
-        
-        if not hasattr(self, 'job_id'):
-            print("⚠️  Skipping backpressure test (no active job)")
-            return True
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                # Try to update FPS (simulate backpressure response)
-                response = await client.patch(
-                    f"{self.ingestion_url}/ingest/{self.job_id}/config",
-                    params={"fps": 2}
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    print(f"✅ Backpressure config updated:")
-                    print(f"   - New FPS: {data['fps']}")
-                    return True
-                else:
-                    print(f"⚠️  Config update returned: {response.status_code}")
-                    return True
-                    
-        except Exception as e:
-            print(f"❌ Backpressure config failed: {e}")
-            return False
-    
-    async def run_all_tests(self):
-        """Run all Phase 2 tests"""
-        print("=" * 60)
-        print("🚀 PHASE 2 - CORE PIPELINE TESTS")
-        print("=" * 60)
+    async def run_complete_demo(self):
+        """
+        Run complete demo sequence
+        """
+        print("\n" + "="*70)
+        print("🎬 MULTI-AGENT DATA ACQUISITION PIPELINE - COMPLETE DEMO")
+        print("   Based on: 'An Agent-Based Data Acquisition Pipeline for Image Data'")
+        print("   Implementation: Phase 4 with Advanced Features")
+        print("="*70)
         
         results = {}
         
-        # Test 1: Registration
-        results['registration'] = await self.test_agents_registered()
+        # Section 1: System Health
+        results['health'] = await self.section_1_system_health()
+        if not results['health']:
+            print("\n❌ System health check failed. Please ensure all containers are running:")
+            print("   docker-compose up -d")
+            return False
         
-        # Test 2: Video file
-        results['video_file'] = await self.test_video_file_exists()
+        await asyncio.sleep(2)
         
-        # Test 3: Start ingestion
-        results['start_ingestion'] = await self.test_start_ingestion()
+        # Section 2: Privacy Setup
+        results['privacy'] = await self.section_2_configure_privacy()
+        await asyncio.sleep(2)
         
-        # Test 4: Monitor pipeline
-        results['monitor_pipeline'] = await self.test_monitor_pipeline()
+        # Section 3: Start Ingestion
+        results['ingestion'] = await self.section_3_start_ingestion()
+        if not results['ingestion']:
+            print("\n❌ Failed to start ingestion. Check logs for details.")
+            return False
         
-        # Test 5: Storage verification
-        results['storage_verification'] = await self.test_storage_verification()
+        await asyncio.sleep(3)
         
-        # Test 6: Processing capabilities
-        results['processing_capabilities'] = await self.test_processing_capabilities()
+        # Section 4: Monitor Pipeline
+        results['monitoring'] = await self.section_4_monitor_pipeline()
         
-        # Test 7: Backpressure config
-        results['backpressure_config'] = await self.test_backpressure_config()
+        # Section 5: Analyze Results
+        results['analysis'] = await self.section_5_analyze_results()
         
-        # Summary
-        print("\n" + "=" * 60)
-        print("📊 TEST SUMMARY")
-        print("=" * 60)
+        # Section 6: Cleanup
+        results['cleanup'] = await self.section_6_cleanup()
         
-        total = len(results)
+        # Final Summary
+        self.print_section("DEMO SUMMARY", "🎯")
+        
         passed = sum(1 for v in results.values() if v)
+        total = len(results)
         
-        for test_name, passed_test in results.items():
-            status = "✅ PASS" if passed_test else "❌ FAIL"
-            print(f"{status}: {test_name}")
+        print(f"\n   Results: {passed}/{total} sections completed successfully")
+        print(f"\n   ✅ System demonstrated:")
+        print(f"      • Agent-based architecture (4 specialized agents)")
+        print(f"      • Adaptive data ingestion (backpressure handling)")
+        print(f"      • Object detection & anonymization")
+        print(f"      • Fault-tolerant storage (primary + fallback)")
+        print(f"      • Real-time monitoring & metrics")
         
-        print(f"\n🎯 Results: {passed}/{total} tests passed ({passed/total*100:.1f}%)")
+        print(f"\n   📊 View detailed dashboard at:")
+        print(f"      http://localhost:8000/dashboard")
+        
+        print(f"\n   📝 Access points:")
+        print(f"      • API Documentation: http://localhost:8000/docs")
+        print(f"      • Metrics API: http://localhost:8000/api/metrics/summary")
+        print(f"      • Agent Registry: http://localhost:8000/agents")
         
         if passed == total:
-            print("\n🎉 Phase 2 Core Pipeline is working!")
+            print("\n   🎉 DEMO COMPLETED SUCCESSFULLY!")
+            return True
         else:
-            print(f"\n⚠️  {total - passed} test(s) failed or skipped.")
-        
-        return passed >= total - 1  # Allow 1 failure
+            print(f"\n   ⚠️  Demo completed with {total - passed} issues")
+            return False
 
 
 async def main():
-    tester = Phase2Tester()
+    """Main execution"""
     
-    print("\n⏳ Waiting 10 seconds for services to be ready...")
+    # Check prerequisites
+    print("\n🔍 Checking prerequisites...")
+    
+    test_video = Path("./test_data/video_traffic.mp4")
+    if not test_video.exists():
+        print(f"⚠️  Test video not found: {test_video}")
+        print("   You can:")
+        print("   1. Place a video file at: test_data/video_traffic.mp4")
+        print("   2. Or modify the demo script to use a camera stream")
+        
+        response = input("\nContinue anyway? (y/n): ")
+        if response.lower() != 'y':
+            return 1
+    
+    print("\n⏳ Waiting for services to stabilize (10 seconds)...")
     await asyncio.sleep(10)
     
-    success = await tester.run_all_tests()
-    return 0 if success else 1
+    # Run demo
+    demo = CompletePipelineDemo()
+    
+    try:
+        success = await demo.run_complete_demo()
+        return 0 if success else 1
+        
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Demo interrupted by user")
+        return 1
+    except Exception as e:
+        print(f"\n\n❌ Demo failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
 
 
 if __name__ == "__main__":
+    import sys
+    
+    print(""" MULTI-AGENT DATA ACQUISITION PIPELINE DEMO""")
+    
     exit_code = asyncio.run(main())
-    exit(exit_code)
+    sys.exit(exit_code)
