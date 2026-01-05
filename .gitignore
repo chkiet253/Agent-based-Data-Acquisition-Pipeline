@@ -21,4 +21,4 @@ venv/
 # IDE
 .vscode/
 .idea/
-.test_data/
+test_data/*.mp4
