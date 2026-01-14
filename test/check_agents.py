@@ -105,12 +105,6 @@ async def check_and_fix():
 
 
 async def main():
-    print("""
-╔══════════════════════════════════════════════════════════╗
-║         AGENT REGISTRATION CHECKER                       ║
-║  Diagnose why dashboard shows no data                    ║
-╚══════════════════════════════════════════════════════════╝
-    """)
     
     success = await check_and_fix()
     

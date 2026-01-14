@@ -1,9 +1,10 @@
 ﻿"""
-Phase 3: Ingestion Agent with Autonomy Features
+Phase 3: Ingestion Agent with Autonomy Features + HLS Stream Support
 - Backpressure handling (adaptive FPS)
 - Self-healing (retry logic)
 - Adaptive batch sizing
 - Queue monitoring
+- HLS/RTSP/HTTP stream support
 """
 import asyncio
 import base64
@@ -71,14 +72,20 @@ class IngestionJob:
         self.processing_times = deque(maxlen=20)  # Track last 20 processing times
         self.last_adjustment_time = time.time()
         self.adjustment_cooldown = 10  # Seconds between adjustments
+        
+        # Stream handling
+        self.is_live_stream = False
+        self.stream_reconnect_count = 0
+        self.max_reconnect_attempts = 5
 
 
 class IngestionAgent(BaseAgent):
     """
-    Phase 3: Autonomous Ingestion Agent
+    Phase 3: Autonomous Ingestion Agent with HLS/Stream Support
     - Adapts FPS based on processing queue
     - Self-heals on errors
     - Monitors and reports backpressure
+    - Supports HLS, RTSP, HTTP streams
     """
     
     def __init__(self, agent_type: str = "ingestion", port: int = 8001, **kwargs):
@@ -97,10 +104,11 @@ class IngestionAgent(BaseAgent):
         @self.app.post("/ingest/start")
         async def start_ingestion(config: IngestionJobConfig):
             try:
-                if not Path(config.video_path).exists():
+                # Validate video path/URL
+                if not self._validate_source(config.video_path):
                     raise HTTPException(
                         status_code=400, 
-                        detail=f"Video file not found: {config.video_path}"
+                        detail=f"Invalid video source: {config.video_path}"
                     )
                 
                 job_id = str(uuid.uuid4())
@@ -167,6 +175,7 @@ class IngestionAgent(BaseAgent):
                 "current_batch_size": job.current_batch_size,
                 "queue_length": job.queue.qsize(),
                 "retry_count": job.retry_count,
+                "is_live_stream": job.is_live_stream,
                 "config": job.config.model_dump()
             }
         
@@ -206,6 +215,109 @@ class IngestionAgent(BaseAgent):
                 "fps": job.current_fps,
                 "batch_size": job.current_batch_size
             }
+    
+    def _validate_source(self, video_path: str) -> bool:
+        """Validate video source (file or stream URL)"""
+        # Check if it's a URL (stream)
+        if video_path.startswith(('http://', 'https://', 'rtsp://', 'rtmp://')):
+            return True
+        
+        # Check if it's a file path
+        if video_path.startswith('/'):
+            # Absolute path in container
+            return True
+        
+        # Check local file
+        return Path(video_path).exists()
+    
+    def _is_stream_url(self, video_path: str) -> bool:
+        """Check if source is a stream URL"""
+        return video_path.startswith(('http://', 'https://', 'rtsp://', 'rtmp://'))
+    
+    def _open_video_with_retry(self, job: IngestionJob) -> bool:
+        """
+        Open video with retry and stream support
+        Supports: Local files, HLS streams, RTSP, HTTP
+        """
+        is_stream = self._is_stream_url(job.config.video_path)
+        job.is_live_stream = is_stream
+        
+        for attempt in range(job.max_retries):
+            try:
+                if is_stream:
+                    self.logger.info(f"Opening stream URL: {job.config.video_path[:60]}...")
+                    
+                    # For HLS/HTTP streams, use CAP_FFMPEG backend
+                    job.cap = cv2.VideoCapture(
+                        job.config.video_path,
+                        cv2.CAP_FFMPEG
+                    )
+                    
+                    # Set buffer size for live streams
+                    job.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
+                    
+                    # Set timeout for network streams
+                    job.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
+                    job.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 10000)
+                    
+                else:
+                    # Local file
+                    self.logger.info(f"Opening local file: {job.config.video_path}")
+                    job.cap = cv2.VideoCapture(job.config.video_path)
+                
+                if job.cap.isOpened():
+                    # Test read a frame
+                    ret, frame = job.cap.read()
+                    if ret and frame is not None:
+                        self.logger.info(f"✅ Video source opened successfully")
+                        self.logger.info(f"   Type: {'Live stream' if is_stream else 'Local file'}")
+                        self.logger.info(f"   Frame size: {frame.shape[1]}x{frame.shape[0]}")
+                        
+                        # Reset position for local files
+                        if not is_stream:
+                            job.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        
+                        return True
+                    else:
+                        raise Exception("Cannot read frames from source")
+                else:
+                    raise Exception("Failed to open video source")
+                    
+            except Exception as e:
+                if attempt < job.max_retries - 1:
+                    wait_time = job.backoff_time * (2 ** attempt)
+                    self.logger.warning(
+                        f"Video open attempt {attempt+1} failed, "
+                        f"retrying in {wait_time}s: {e}"
+                    )
+                    time.sleep(wait_time)
+                else:
+                    self.logger.error(f"Failed to open video after {job.max_retries} attempts")
+                    return False
+        
+        return False
+    
+    def _reconnect_stream(self, job: IngestionJob) -> bool:
+        """Reconnect to stream if disconnected"""
+        if not job.is_live_stream:
+            return False
+        
+        if job.stream_reconnect_count >= job.max_reconnect_attempts:
+            self.logger.error(f"Max reconnect attempts ({job.max_reconnect_attempts}) reached")
+            return False
+        
+        job.stream_reconnect_count += 1
+        self.logger.warning(f"Stream disconnected, attempting reconnect {job.stream_reconnect_count}...")
+        
+        # Release old capture
+        if job.cap:
+            job.cap.release()
+        
+        # Wait before reconnect
+        time.sleep(2 * job.stream_reconnect_count)
+        
+        # Try to reopen
+        return self._open_video_with_retry(job)
     
     def _calculate_backpressure(self, job: IngestionJob) -> BackpressureMetrics:
         """Calculate backpressure and suggest adjustments"""
@@ -277,7 +389,7 @@ class IngestionAgent(BaseAgent):
             job.last_adjustment_time = now
     
     async def _run_ingestion(self, job: IngestionJob):
-        """Main ingestion loop with self-healing"""
+        """Main ingestion loop with self-healing and stream support"""
         try:
             job.status = "running"
             
@@ -286,33 +398,32 @@ class IngestionAgent(BaseAgent):
                 await self._discover_processing_agent()
             
             # Open video with retry
-            for attempt in range(job.max_retries):
-                try:
-                    job.cap = cv2.VideoCapture(job.config.video_path)
-                    if job.cap.isOpened():
-                        break
-                    raise Exception("Failed to open video")
-                except Exception as e:
-                    if attempt < job.max_retries - 1:
-                        wait_time = job.backoff_time * (2 ** attempt)
-                        self.logger.warning(
-                            f"Video open attempt {attempt+1} failed, "
-                            f"retrying in {wait_time}s: {e}"
-                        )
-                        await asyncio.sleep(wait_time)
-                    else:
-                        raise
+            if not self._open_video_with_retry(job):
+                raise Exception("Failed to open video source")
             
+            # Get video properties
             video_fps = job.cap.get(cv2.CAP_PROP_FPS)
             total_frames = int(job.cap.get(cv2.CAP_PROP_FRAME_COUNT))
             
-            self.logger.info(f"Video: {video_fps} FPS, {total_frames} frames")
+            # Handle live streams (FPS might be 0 or unknown)
+            if video_fps == 0 or video_fps > 1000:
+                video_fps = 25  # Default FPS for live streams
+                self.logger.warning(f"FPS not available, using default: {video_fps}")
             
-            if job.config.start_frame > 0:
+            if total_frames <= 0 or job.is_live_stream:
+                total_frames = float('inf')  # Infinite for live streams
+                self.logger.info(f"Live stream mode: infinite duration")
+            else:
+                self.logger.info(f"Video: {video_fps} FPS, {total_frames} frames")
+            
+            # Set start frame for local files
+            if not job.is_live_stream and job.config.start_frame > 0:
                 job.cap.set(cv2.CAP_PROP_POS_FRAMES, job.config.start_frame)
             
             batch = []
             frame_count = job.config.start_frame
+            consecutive_read_failures = 0
+            max_consecutive_failures = 10
             
             while not job.stop_flag.is_set():
                 # Check pause
@@ -323,15 +434,38 @@ class IngestionAgent(BaseAgent):
                 # Apply backpressure adjustment
                 await self._apply_backpressure_adjustment(job)
                 
-                # Check end frame
-                if job.config.end_frame and frame_count >= job.config.end_frame:
-                    break
+                # Check end frame (for local files)
+                if not job.is_live_stream and job.config.end_frame:
+                    if frame_count >= job.config.end_frame:
+                        break
                 
                 # Read frame
                 ret, frame = job.cap.read()
-                if not ret:
-                    break
                 
+                if not ret or frame is None:
+                    consecutive_read_failures += 1
+                    
+                    if consecutive_read_failures >= max_consecutive_failures:
+                        if job.is_live_stream:
+                            # Try to reconnect for streams
+                            self.logger.warning(f"Stream read failures, attempting reconnect...")
+                            if self._reconnect_stream(job):
+                                consecutive_read_failures = 0
+                                continue
+                            else:
+                                self.logger.error("Failed to reconnect to stream")
+                                break
+                        else:
+                            # End of local file
+                            self.logger.info("End of video file reached")
+                            break
+                    
+                    # Wait a bit before retry
+                    await asyncio.sleep(0.1)
+                    continue
+                
+                # Reset failure counter on successful read
+                consecutive_read_failures = 0
                 frame_count += 1
                 
                 # Calculate frame skip based on current FPS
@@ -444,7 +578,7 @@ class IngestionAgent(BaseAgent):
                     receiver_url=self.processing_agent_url
                 )
                 
-                self.logger.info(f"Sent batch {batch_id} with {len(batch)} frames")
+                self.logger.debug(f"Sent batch {batch_id} with {len(batch)} frames")
                 return True
                 
             except Exception as e:
@@ -488,7 +622,7 @@ class IngestionAgent(BaseAgent):
             self.logger.error(f"Failed to discover processing agent: {e}")
     
     async def get_capabilities(self) -> list[str]:
-        """Return Phase 3 capabilities"""
+        """Return Phase 3 capabilities with stream support"""
         return [
             "video_ingestion",
             "frame_capture",
@@ -497,11 +631,15 @@ class IngestionAgent(BaseAgent):
             "backpressure_handling",
             "self_healing",
             "quality_check",
-            "auto_retry"
+            "auto_retry",
+            "hls_stream_support",
+            "rtsp_stream_support",
+            "http_stream_support",
+            "stream_reconnection"
         ]
     
     async def on_startup(self):
-        self.logger.info("Phase 3 Ingestion Agent started with autonomy features")
+        self.logger.info("Phase 3 Ingestion Agent started with stream support")
         if self.orchestrator_url:
             await asyncio.sleep(2)
             await self._discover_processing_agent()
